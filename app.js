@@ -654,6 +654,42 @@ function saveStock(id){
 function editStock(id){stockForm(stocks.find(x=>x.id===id))}
 function delStock(id){if(confirm('確定刪除此股票？')){stocks=stocks.filter(x=>x.id!==id);save();renderAll();toast('已刪除')}}
 
+/* 批量貼上匯入 */
+const BULK_COLS=['code','name','industry','price','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform'];
+const BULK_HEAD='代號,名稱,產業,價格,成交量,5日均量,5MA,10MA,20MA,60MA,RSI,MACD,K,D,外資,投信,融資,前波支撐,前高,前低,平台高度';
+function bulkStockForm(){
+  openModal(`<h3>⇪ 批量匯入股票</h3>
+  <p class="muted">每行一檔，欄位用 <b>逗號</b> 或 <b>Tab</b>（可直接從 Excel／Google 試算表整列複製貼上）分隔。<b>只有「代號」必填</b>，其餘可留空；同代號會自動更新。</p>
+  <p class="muted" style="margin-top:6px">欄位順序：<br><code style="color:var(--cyan);font-size:12px">${BULK_HEAD}</code></p>
+  <label>貼上資料</label>
+  <textarea id="f_bulk" style="min-height:160px;font-family:monospace;font-size:12px" placeholder="2330,台積電,半導體,1050,32000,25000,1010,990,960,900,64,8,72,60,8500,1200,-300,980,1080,850,40
+2317,鴻海,電子,210,45000,40000,205,200,195,185,60,2,58,52,3000,500,100,190,220,150,15"></textarea>
+  <div class="modal-foot"><button class="btn" onclick="fillBulkSample()">填入範例</button><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="saveBulkStocks()">匯入</button></div>`);
+}
+function fillBulkSample(){
+  $('#f_bulk').value=`2330,台積電,半導體,1050,32000,25000,1010,990,960,900,64,8,72,60,8500,1200,-300,980,1080,850,40
+2317,鴻海,電子,210,45000,40000,205,200,195,185,60,2,58,52,3000,500,100,190,220,150,15
+2603,長榮,航運,205,88000,42000,198,190,185,178,81,3,88,80,-5200,-800,6500,188,215,150,20`;
+}
+function saveBulkStocks(){
+  const raw=($('#f_bulk').value||'').trim();
+  if(!raw){toast('請先貼上資料');return;}
+  let added=0,updated=0,skipped=0;
+  raw.split(/\r?\n/).forEach(line=>{
+    if(!line.trim())return;
+    const cells=line.split(/[\t,]/).map(c=>c.trim());
+    if(cells[0]==='代號'||/代號/.test(cells[0]))return; // 跳過標題列
+    const code=cells[0];
+    if(!code){skipped++;return;}
+    const o={}; BULK_COLS.forEach((k,i)=>{ if(cells[i]!==undefined&&cells[i]!=='') o[k]=cells[i]; });
+    const idx=stocks.findIndex(x=>x.code===code);
+    if(idx>=0){stocks[idx]={...stocks[idx],...o};updated++;}
+    else{stocks.push({id:uid(),...o});added++;}
+  });
+  save();closeModal();renderAll();
+  toast(`匯入完成：新增 ${added}、更新 ${updated}${skipped?`、略過 ${skipped}`:''}`);
+}
+
 /* 持股表單 */
 function holdForm(h){
   h=h||{buyDate:today()};
@@ -738,6 +774,7 @@ function switchTab(tab){
 $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b)switchTab(b.dataset.tab)});
 
 $('#editMarketBtn').onclick=()=>marketForm();
+$('#importStockBtn').onclick=()=>bulkStockForm();
 $('#addStockBtn').onclick=()=>stockForm();
 $('#addHoldBtn').onclick=()=>holdForm();
 $('#addTradeBtn').onclick=()=>tradeForm();
