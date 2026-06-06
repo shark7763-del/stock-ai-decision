@@ -160,10 +160,11 @@ function getMarket(){
 function idxTrend(p,m20,m60){p=n(p);m20=n(m20);m60=n(m60);if(!p)return 0;let s=0;if(p>m20)s+=40;if(m20>m60)s+=30;if(p>m60)s+=30;return s;}
 function marketInfo(){
   const m=getMarket();
+  const haveTw=n(m.twPrice)>0, haveOtc=n(m.otcPrice)>0;
   const tw=idxTrend(m.twPrice,m.twMa20,m.twMa60);
   const otc=idxTrend(m.otcPrice,m.otcMa20,m.otcMa60);
-  const has=n(m.twPrice)>0||n(m.otcPrice)>0;
-  const trend=Math.round(0.6*tw+0.4*otc);
+  const has=haveTw||haveOtc;
+  const trend=(haveTw&&haveOtc)?Math.round(0.6*tw+0.4*otc):haveTw?tw:haveOtc?otc:0;
   const risk=Math.round(100-trend);
   const state=!has?'未設定':trend>=66?'多方':trend>=40?'盤整':'空方';
   return {tw,otc,trend,risk,state,has};
@@ -664,6 +665,28 @@ function codeAutofill(){
 }
 /* 由代號快速加入（搜尋建議用） */
 function addByCode(code){const d=(window.TW_STOCKS&&TW_STOCKS[code])||{};stockForm({code,name:d.n||'',industry:d.i||''});}
+
+/* 載入每日自動更新資料 data.json（由 GitHub Actions 產生） */
+const AUTO_FIELDS=['price','volume','vol5','ma5','ma10','ma20','ma60','rsi','k','d','macd','foreign','trust'];
+async function loadDailyData(silent){
+  try{
+    const res=await fetch('data.json?t='+Date.now());
+    if(!res.ok) throw new Error('no file');
+    const data=await res.json();
+    let added=0,updated=0;
+    (data.stocks||[]).forEach(d=>{
+      const i=stocks.findIndex(x=>x.code===d.code);
+      if(i>=0){ AUTO_FIELDS.forEach(f=>{ if(d[f]!==undefined&&d[f]!=='') stocks[i][f]=d[f]; });
+        if(!stocks[i].name&&d.name)stocks[i].name=d.name; if(!stocks[i].industry&&d.industry)stocks[i].industry=d.industry; updated++; }
+      else{ stocks.push({id:uid(),...d}); added++; }
+    });
+    if(data.market){ cfg.market={...getMarket(),...data.market}; }
+    save();renderAll();
+    toast(`已載入 ${data.tradeDate||''} 數據：新增 ${added}、更新 ${updated}`);
+  }catch(e){
+    if(!silent) toast('尚無 data.json（需部署到 GitHub Pages 由 Actions 產生後才有資料）');
+  }
+}
 /* 建立代號 datalist（表單自動完成） */
 function buildCodeDatalist(){
   if(!window.TW_STOCKS||document.getElementById('codeList'))return;
@@ -804,6 +827,7 @@ function switchTab(tab){
 $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b)switchTab(b.dataset.tab)});
 
 $('#editMarketBtn').onclick=()=>marketForm();
+$('#loadDataBtn').onclick=()=>loadDailyData(false);
 $('#importStockBtn').onclick=()=>bulkStockForm();
 $('#addStockBtn').onclick=()=>stockForm();
 $('#addHoldBtn').onclick=()=>holdForm();
