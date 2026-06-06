@@ -146,6 +146,68 @@ function statusOf(s){
   return 'observe';
 }
 
+/* AI 總分（狀態卡用） */
+function aiTotal(s){
+  const fr=fiveRules(s).score, bi=bottomIndex(s).score, top=topIndex(s).score;
+  return Math.round(0.45*fr + 0.3*bi + 0.25*(100-top));
+}
+
+/* ---- 大盤濾網 ---- */
+function getMarket(){
+  if(!cfg.market) cfg.market={twPrice:0,twMa20:0,twMa60:0,otcPrice:0,otcMa20:0,otcMa60:0};
+  return cfg.market;
+}
+function idxTrend(p,m20,m60){p=n(p);m20=n(m20);m60=n(m60);if(!p)return 0;let s=0;if(p>m20)s+=40;if(m20>m60)s+=30;if(p>m60)s+=30;return s;}
+function marketInfo(){
+  const m=getMarket();
+  const tw=idxTrend(m.twPrice,m.twMa20,m.twMa60);
+  const otc=idxTrend(m.otcPrice,m.otcMa20,m.otcMa60);
+  const has=n(m.twPrice)>0||n(m.otcPrice)>0;
+  const trend=Math.round(0.6*tw+0.4*otc);
+  const risk=Math.round(100-trend);
+  const state=!has?'未設定':trend>=66?'多方':trend>=40?'盤整':'空方';
+  return {tw,otc,trend,risk,state,has};
+}
+
+/* ---- 進場三階段 A/B/C 區 ---- */
+function entryZone(s){
+  const fr=fiveRules(s).score, bi=bottomIndex(s).score;
+  const price=n(s.price),ma5=n(s.ma5),ma10=n(s.ma10),ma20=n(s.ma20),ma60=n(s.ma60),rsi=n(s.rsi),macd=n(s.macd);
+  const bull=price>ma5&&ma5>ma10&&ma10>ma20&&ma20>ma60;
+  const volUp=n(s.vol5)?n(s.volume)>n(s.vol5):false;
+  if(bull&&fr>=80&&rsi>=55&&rsi<=75&&macd>=0) return {z:'C',label:'C區 · 主升段加碼',desc:'多頭排列＋五鐵律強，順勢加碼但控制總部位上限'};
+  if(price>ma20&&n(s.k)>n(s.d)&&volUp&&fr>=60) return {z:'B',label:'B區 · 起漲確認',desc:'站上20MA＋KD轉強＋量增，可正式建立基本部位'};
+  if(bi>=60) return {z:'A',label:'A區 · 低點試單',desc:'抄底指數偏高，僅小量試單、嚴設停損'};
+  return null;
+}
+
+/* ---- 禁止進場條件 ---- */
+function forbidEntry(s){
+  const reasons=[];
+  const price=n(s.price), ma20=n(s.ma20);
+  const bias=ma20?((price-ma20)/ma20)*100:0;
+  const tp=targetPrices(s);
+  const stopPrice=price*(1-0.08), lossPerShare=price-stopPrice;
+  const rr=(lossPerShare>0)?(tp.t1-price)/lossPerShare:0;
+  const top=topIndex(s).score;
+  const mk=marketInfo();
+  const cap=n(cfg.capital)||0, oneLotRisk=lossPerShare*1000;
+  if(rr>0 && rr<1.5) reasons.push(`風險報酬比 ${rr.toFixed(2)} < 1 : 1.5`);
+  if(bias>8) reasons.push(`正乖離 20MA ${bias.toFixed(1)}% > 8%`);
+  if(top>70) reasons.push(`逃命指數 ${top} > 70`);
+  if(cap && oneLotRisk>cap*0.02) reasons.push(`單筆風險(最小1張) 超過總資金 2%`);
+  if(mk.has && mk.risk>70) reasons.push(`大盤風險指數 ${mk.risk} > 70`);
+  return reasons;
+}
+
+/* ---- 出場分級 ---- */
+function exitGrade(score){
+  if(score>=80) return {g:'全部出場',cls:'stop',pct:100};
+  if(score>=60) return {g:'減碼 50%',cls:'stop',pct:50};
+  if(score>=40) return {g:'減碼 30%',cls:'watch',pct:30};
+  return {g:'續抱',cls:'go',pct:0};
+}
+
 /* ===================================================================
    投組 / 統計計算
    =================================================================== */
@@ -176,7 +238,99 @@ function tradeStats(){
 /* ===================================================================
    渲染
    =================================================================== */
-function renderAll(){renderDashboard();renderScreener();renderEntrySel();renderExitSel();renderHoldings();renderTrades();renderStats();renderCoach();$('#poolCountBadge').textContent=stocks.length+' 檔追蹤';}
+function renderAll(){renderDashboard();renderWar();renderScreener();renderEntrySel();renderExitSel();renderHoldings();renderTrades();renderStats();renderCoach();$('#poolCountBadge').textContent=stocks.length+' 檔追蹤';}
+
+/* ---- 今日作戰室 ---- */
+function holdToStock(h){return {code:h.code,name:h.name,price:h.price,ma5:h.ma5,ma10:h.ma10,ma20:h.ma20,ma60:h.ma60,rsi:h.rsi,k:h.k,d:h.d,macd:h.macd,volume:h.volume,vol5:h.vol5,foreign:h.foreign,trust:h.trust,margin:h.margin,support:h.support,prevHigh:h.prevHigh,prevLow:h.prevLow,platform:h.platform};}
+function renderWar(){
+  const mk=marketInfo();
+  const banner=$('#warBanner');
+  const stCls=mk.state==='多方'?'go':mk.state==='空方'?'stop':mk.state==='盤整'?'watch':'';
+  banner.className='card glass war-banner '+stCls;
+  const icon=mk.state==='多方'?'📈':mk.state==='空方'?'📉':mk.state==='盤整'?'➡️':'⚙️';
+  banner.innerHTML=`<div class="wb-state">${icon} 今日大盤：${mk.state}</div>
+    <div class="wb-sub">${mk.has?`綜合趨勢分 ${mk.trend} · 大盤風險指數 ${mk.risk}`:'尚未設定大盤數據 — 點下方「設定大盤數據」輸入加權／櫃買指數'}</div>`;
+  $('#mTw').textContent=mk.has?mk.tw:'—';
+  $('#mOtc').textContent=mk.has?mk.otc:'—';
+  $('#mRisk').textContent=mk.has?mk.risk:'—';
+  $('#marketNote').textContent=!mk.has?'':mk.risk>70?'⚠️ 大盤風險指數 >70：系統自動禁止所有個股進場（保護機制）。':mk.state==='空方'?'空方環境：僅做 A 區小量試單、降低總部位。':mk.state==='盤整'?'盤整環境：嚴選高分標的、快進快出。':'多方環境：可順勢操作，優先 B／C 區。';
+
+  const entryL=[],obsL=[],forbL=[];
+  stocks.forEach(s=>{
+    const forb=forbidEntry(s), zone=entryZone(s), ai=aiTotal(s);
+    if(forb.length) forbL.push({s,info:forb[0],ai});
+    else if(zone) entryL.push({s,zone,ai});
+    else obsL.push({s,ai});
+  });
+  entryL.sort((a,b)=>b.ai-a.ai);obsL.sort((a,b)=>b.ai-a.ai);forbL.sort((a,b)=>b.ai-a.ai);
+  const item=(id,left,right,rc)=>`<div class="war-item" onclick="showCard('${id}')"><span>${left}</span><span class="${rc||''}">${right}</span></div>`;
+  $('#warEntry').innerHTML=entryL.length?entryL.map(r=>item(r.s.id,`${r.s.code} ${r.s.name||''}`,`<span class="zone-pill zone-${r.zone.z}">${r.zone.z}區</span> AI ${r.ai}`)).join(''):'<p class="muted">今日無符合進場條件標的</p>';
+  $('#warObserve').innerHTML=obsL.length?obsL.map(r=>item(r.s.id,`${r.s.code} ${r.s.name||''}`,`AI ${r.ai}`)).join(''):'<p class="muted">無</p>';
+  $('#warForbid').innerHTML=forbL.length?forbL.map(r=>item(r.s.id,`${r.s.code} ${r.s.name||''}`,r.info,'neg')).join(''):'<p class="muted">無</p>';
+
+  const reduceL=[],stopL=[];
+  holds.forEach(h=>{
+    const top=topIndex(holdToStock(h)).score, g=exitGrade(top);
+    if(g.pct>0) reduceL.push({h,top,g});
+    if(n(h.stop)>0&&n(h.price)>0&&n(h.price)<=n(h.stop)) stopL.push(h);
+  });
+  reduceL.sort((a,b)=>b.top-a.top);
+  $('#warReduce').innerHTML=reduceL.length?reduceL.map(r=>`<div class="war-item" onclick="showCard('${r.h.id}')"><span>${r.h.code} ${r.h.name||''}</span><span class="${r.g.cls==='stop'?'neg':''}">逃命 ${r.top} · ${r.g.g}</span></div>`).join(''):'<p class="muted">持股無減碼警示</p>';
+  $('#warStop').innerHTML=stopL.length?stopL.map(h=>`<div class="war-item" onclick="showCard('${h.id}')"><span>${h.code} ${h.name||''}</span><span class="neg">現價 ${fmt(h.price)} ≤ 停損 ${fmt(h.stop)}</span></div>`).join(''):'<p class="muted">無持股觸及停損</p>';
+}
+
+/* ---- 股票狀態卡 ---- */
+function showCard(id){
+  let s=stocks.find(x=>x.id===id), isHold=false, holdRef=null;
+  if(!s){holdRef=holds.find(x=>x.id===id); if(holdRef){s=holdToStock(holdRef);isHold=true;}}
+  if(!s)return;
+  const fr=fiveRules(s).score,[lc]=lightOf(fr),bi=bottomIndex(s).score,top=topIndex(s).score,tp=targetPrices(s),pe=persona(s),ai=aiTotal(s);
+  const zone=entryZone(s), forb=forbidEntry(s);
+  const stopPrice=(holdRef&&n(holdRef.stop)>0)?n(holdRef.stop):n(s.price)*0.92;
+  let action,acls;
+  if(isHold){const g=exitGrade(top);action=(top>=60?'🔴 ':top>=40?'🟠 ':'🟢 ')+g.g;acls=g.cls;}
+  else if(forb.length){action='⛔ 禁止進場';acls='stop';}
+  else if(zone){action='🟢 '+zone.label;acls=zone.z==='A'?'watch':'go';}
+  else if(top>=60){action='🔴 '+exitGrade(top).g;acls='stop';}
+  else {action='🟡 觀察';acls='watch';}
+  openModal(`<h3>📇 股票狀態卡</h3>
+   <div class="stock-card">
+     <div class="sc-head">
+       <div><div class="sc-name">${s.code} ${s.name||''}</div><span class="persona">${pe.emoji}${pe.type}</span> <span class="muted">${pe.desc}</span></div>
+       <div class="sc-ai"><div class="sc-ai-num">${ai}</div><div class="k">AI 總分</div></div>
+     </div>
+     <div class="sc-grid">
+       <div><span class="k">五鐵律</span><b class="pill ${lc}">${fr}</b></div>
+       <div><span class="k">抄底指數</span><b>${bi}</b></div>
+       <div><span class="k">逃命指數</span><b>${top}</b></div>
+       <div><span class="k">停損價</span><b>${stopPrice.toFixed(2)}</b></div>
+       <div><span class="k">目標價</span><b>${tp.t1.toFixed(2)}</b></div>
+       <div><span class="k">人格</span><b>${pe.emoji}${pe.type}</b></div>
+     </div>
+     <div class="sc-action ${acls}">${action}</div>
+     ${forb.length&&!isHold?`<div class="muted">禁止原因：${forb.join('、')}</div>`:''}
+   </div>
+   <div class="modal-foot"><button class="btn primary" onclick="closeModal()">關閉</button></div>`);
+}
+
+/* ---- 大盤數據設定 ---- */
+function marketForm(){
+  const m=getMarket();
+  openModal(`<h3>🌐 設定大盤數據</h3>
+  <p class="muted" style="margin-bottom:8px">輸入加權／櫃買指數的現價與均線，系統計算趨勢分與大盤風險指數，並據此影響個股進場建議。</p>
+  <div class="form-grid">
+    ${field('加權指數 現價','m_twPrice',m.twPrice)}${field('加權 20MA','m_twMa20',m.twMa20)}
+    ${field('加權 60MA','m_twMa60',m.twMa60,'number',true)}
+    ${field('櫃買指數 現價','m_otcPrice',m.otcPrice)}${field('櫃買 20MA','m_otcMa20',m.otcMa20)}
+    ${field('櫃買 60MA','m_otcMa60',m.otcMa60,'number',true)}
+  </div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="saveMarket()">儲存</button></div>`);
+}
+function saveMarket(){
+  const g=k=>$('#m_'+k).value;
+  cfg.market={twPrice:g('twPrice'),twMa20:g('twMa20'),twMa60:g('twMa60'),otcPrice:g('otcPrice'),otcMa20:g('otcMa20'),otcMa60:g('otcMa60')};
+  save();closeModal();renderAll();toast('大盤數據已更新');
+}
 
 /* ---- 儀表板 ---- */
 let charts={};
@@ -250,7 +404,7 @@ function renderScreener(filter=''){
       <td>${fmt(s.rsi)}</td><td>${fmt(s.k)}/${fmt(s.d)}</td><td class="${cls(n(s.foreign))}">${fmt(s.foreign)}</td>
       <td><span class="persona">${pe.emoji}${pe.type}</span></td>
       <td><span class="pill ${lc}">${fr} ${lt}</span></td><td>${bi}</td><td>${ti}</td>
-      <td><button class="link" onclick="editStock('${s.id}')">編輯</button> · <button class="link" onclick="delStock('${s.id}')">刪</button></td>
+      <td><button class="link" onclick="showCard('${s.id}')">卡</button> · <button class="link" onclick="editStock('${s.id}')">編輯</button> · <button class="link" onclick="delStock('${s.id}')">刪</button></td>
     </tr>`;
   });
 }
@@ -268,16 +422,21 @@ function showEntry(id){
   const s=stocks.find(x=>x.id===id); const box=$('#entryResult');
   if(!s){box.innerHTML='';return;}
   const fr=fiveRules(s),[lc,lt]=lightOf(fr.score),bi=bottomIndex(s),tp=targetPrices(s),pe=persona(s);
-  // 綜合進場判斷
+  // 綜合進場判斷（整合 進場三階段 + 禁止進場 + 大盤濾網）
   const combo=Math.round(fr.score*0.5+bi.score*0.5);
+  const forb=forbidEntry(s), zone=entryZone(s), mk=marketInfo();
   let kind,verd;
-  if(fr.score>=80&&bi.score>=60){kind='go';verd='✅ 可進場 / 分批布局';}
+  if(forb.length){kind='stop';verd='⛔ 禁止進場';}
+  else if(zone){kind=zone.z==='A'?'watch':'go';verd=(zone.z==='C'?'🚀 ':zone.z==='B'?'✅ ':'🧪 ')+zone.label;}
   else if(fr.score>=60||bi.score>=60){kind='watch';verd='⚠️ 觀察 · 等更明確訊號';}
   else {kind='stop';verd='⛔ 不建議進場';}
+  const zoneHtml=(zone&&!forb.length)?`<div class="zone-bar"><span class="zone-pill zone-${zone.z}">${zone.z}區</span><span>${zone.desc}</span></div>`:'';
+  const forbHtml=forb.length?`<div class="forbid-box">⛔ 觸發禁止進場條件：<ul>${forb.map(r=>`<li>${r}</li>`).join('')}</ul></div>`:'';
   box.innerHTML=`
   <div class="verdict ${kind}">
     <h2>${verd}</h2>
-    <div class="muted">${s.code} ${s.name||''} · <span class="persona">${pe.emoji}${pe.type}</span> ${pe.desc}</div>
+    <div class="muted">${s.code} ${s.name||''} · <span class="persona">${pe.emoji}${pe.type}</span> ${pe.desc} · 大盤：<b>${mk.state}</b></div>
+    ${zoneHtml}${forbHtml}
     <div class="metric-row">
       <div class="metric"><div class="v"><span class="pill ${lc}">${fr.score}</span></div><div class="k">五鐵律 ${lt}</div></div>
       <div class="metric"><div class="v">${bi.score}</div><div class="k">抄底指數</div></div>
@@ -307,16 +466,16 @@ function showExit(val){
   if(t==='s') s=stocks.find(x=>x.id===id);
   else {const h=holds.find(x=>x.id===id); s=h?{code:h.code,name:h.name,price:h.price,ma5:h.ma5,ma20:h.ma20,rsi:h.rsi,k:h.k,d:h.d,volume:h.volume,vol5:h.vol5,foreign:h.foreign,margin:h.margin}:null; s&&(s._hold=h);}
   if(!s){box.innerHTML='';return;}
-  const ti=topIndex(s);
-  let kind=ti.score>=60?'stop':ti.score>=40?'watch':'go';
+  const ti=topIndex(s); const g=exitGrade(ti.score);
+  let kind=g.cls;
   box.innerHTML=`
   <div class="verdict ${kind}">
     <h2>🚨 逃命指數 ${ti.score}</h2>
     <div class="muted">${s.code} ${s.name||''} · 出場風險：<b>${ti.risk}</b></div>
     <div class="metric-row">
       <div class="metric"><div class="v">${ti.score}</div><div class="k">逃命指數</div></div>
-      <div class="metric"><div class="v">${ti.advice}</div><div class="k">操作建議</div></div>
-      <div class="metric"><div class="v">${ti.score>=60?'是':'否'}</div><div class="k">是否該停利</div></div>
+      <div class="metric"><div class="v">${g.g}</div><div class="k">出場分級</div></div>
+      <div class="metric"><div class="v">${g.pct}%</div><div class="k">建議減碼比例</div></div>
     </div>
   </div>
   <div class="card glass"><h3>🔥 高點預警因子</h3>
@@ -424,6 +583,35 @@ function renderCoach(){
     <div class="coach-block good"><h4>✅ 今日優點</h4><ul>${(good.length?good:['—']).map(x=>`<li>• ${x}</li>`).join('')}</ul></div>
     <div class="coach-block bad"><h4>⚠️ 缺點 / 風險</h4><ul>${(bad.length?bad:['本日紀律滿分 🎉']).map(x=>`<li>• ${x}</li>`).join('')}</ul></div>
     <div class="coach-block tip"><h4>💡 改善建議</h4><ul>${tips.map(x=>`<li>• ${x}</li>`).join('')}</ul></div>`;
+
+  /* ----- AI 教練 · 每日簡報（升級）----- */
+  const mk=marketInfo();
+  // 最大風險：持股中逃命指數最高者
+  let bigRisk='目前無持股，無部位風險。';
+  if(holds.length){
+    let worst=null,wt=-1;
+    holds.forEach(h=>{const t=topIndex(holdToStock(h)).score;if(t>wt){wt=t;worst=h;}});
+    bigRisk = wt>=40 ? `${worst.code} ${worst.name||''}：逃命指數 ${wt}，建議「${exitGrade(wt).g}」` : '持股風險可控，無高逃命指數標的。';
+  }
+  if(holds.some(h=>n(h.stop)>0&&n(h.price)>0&&n(h.price)<=n(h.stop))) bigRisk='有持股已跌破停損價，這是今日最大風險，須優先處理。';
+  // 今日評語
+  const comment = score>=85?'紀律執行到位，維持系統化操作節奏。':score>=70?'整體穩定，仍有 1~2 項紀律待落實。':score>=55?'紀律出現鬆動，留意是否情緒化交易。':'今日紀律不及格，建議暫停加碼、回到計畫面重新檢視。';
+  // 明日任務
+  const tasks=[];
+  if(mk.has&&mk.risk>70) tasks.push('大盤風險指數 >70：明日以減碼／觀望為主，不開新倉。');
+  else if(mk.state==='空方') tasks.push('空方環境：明日只做 A 區小量試單，嚴控部位。');
+  else tasks.push('開盤先看作戰室「可進場」清單，優先 AI 總分最高者。');
+  if(holds.some(h=>n(h.stop)>0&&n(h.price)>0&&n(h.price)<=n(h.stop))) tasks.push('開盤先處理已觸及停損的持股。');
+  tasks.push('每筆下單前先填停損價，確認風險報酬比 ≥ 1 : 1.5。');
+  // 紀律提醒
+  const remind = !rec.checks.stop?'⚠️ 你尚未確認嚴守停損 — 這是最高優先紀律。':!rec.checks.noChase?'⚠️ 注意追高，等拉回 20MA 再進場。':!rec.checks.noAdd?'⚠️ 不要向下攤平，只加碼獲利部位。':'守住停損與部位上限，讓系統幫你過濾雜訊。';
+  $('#coachUpgrade').innerHTML=`<h3>📋 AI 教練 · 每日簡報</h3>
+   <div class="grid g2">
+     <div class="coach-block tip"><h4>🗣 今日交易評語</h4><ul><li>${comment}</li></ul></div>
+     <div class="coach-block bad"><h4>⚠️ 最大風險</h4><ul><li>${bigRisk}</li></ul></div>
+     <div class="coach-block good"><h4>🎯 明日任務</h4><ul>${tasks.map(t=>`<li>• ${t}</li>`).join('')}</ul></div>
+     <div class="coach-block tip"><h4>🧭 紀律提醒</h4><ul><li>${remind}</li></ul></div>
+   </div>`;
 }
 
 /* ===================================================================
@@ -543,10 +731,13 @@ function switchTab(tab){
   $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   $$('.tab').forEach(t=>t.classList.toggle('active',t.id===tab));
   if(tab==='dashboard'||tab==='stats')drawCharts();
+  if(tab==='war')renderWar();
+  if(tab==='coach')renderCoach();
   window.scrollTo({top:0,behavior:'smooth'});
 }
 $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b)switchTab(b.dataset.tab)});
 
+$('#editMarketBtn').onclick=()=>marketForm();
 $('#addStockBtn').onclick=()=>stockForm();
 $('#addHoldBtn').onclick=()=>holdForm();
 $('#addTradeBtn').onclick=()=>tradeForm();
@@ -583,6 +774,7 @@ function seed(){
     {id:uid(),code:'2882',name:'國泰金',industry:'金融',price:62,volume:21000,vol5:20000,ma5:61.5,ma10:61,ma20:60.8,ma60:60,rsi:52,macd:0.2,k:50,d:48,foreign:300,trust:100,margin:-50,support:60,prevHigh:66,prevLow:55,platform:3},
     {id:uid(),code:'3034',name:'聯詠',industry:'IC設計',price:480,volume:6200,vol5:9000,ma5:495,ma10:505,ma20:520,ma60:540,rsi:32,macd:-4,k:22,d:30,foreign:-1500,trust:200,margin:-1200,support:470,prevHigh:600,prevLow:455,platform:15},
   ];
+  cfg.market={twPrice:23000,twMa20:22500,twMa60:21800,otcPrice:255,otcMa20:250,otcMa60:240};
   save();
 }
 

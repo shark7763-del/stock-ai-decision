@@ -31,6 +31,7 @@
 <!-- ===== 導覽 ===== -->
 <nav class="nav glass" id="nav">
   <button class="nav-btn active" data-tab="dashboard">🏠 儀表板</button>
+  <button class="nav-btn" data-tab="war">🎯 今日作戰室</button>
   <button class="nav-btn" data-tab="screener">🔍 選股中心</button>
   <button class="nav-btn" data-tab="entry">🟢 進場引擎</button>
   <button class="nav-btn" data-tab="exit">🔴 出場引擎</button>
@@ -83,6 +84,31 @@
     <h3>🎯 今日 AI 重點清單（依進場分數排序）</h3>
     <div class="table-wrap"><table id="dbTopTable"><thead><tr><th>代號</th><th>名稱</th><th>人格</th><th>五鐵律</th><th>抄底</th><th>逃命</th><th>狀態</th></tr></thead><tbody></tbody></table></div>
   </div>
+</section>
+
+<!-- ============ 今日作戰室 ============ -->
+<section class="tab" id="war">
+  <div class="card glass war-banner" id="warBanner"></div>
+
+  <div class="card glass">
+    <div class="card-head"><h3>🌐 大盤濾網</h3><button class="btn sm" id="editMarketBtn">設定大盤數據</button></div>
+    <div class="metric-row market-grid">
+      <div class="metric"><div class="v" id="mTw">—</div><div class="k">加權指數趨勢分</div></div>
+      <div class="metric"><div class="v" id="mOtc">—</div><div class="k">櫃買指數趨勢分</div></div>
+      <div class="metric"><div class="v" id="mRisk">—</div><div class="k">大盤風險指數</div></div>
+    </div>
+    <p class="muted" id="marketNote"></p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card glass"><h3>🟢 今日可進場</h3><div id="warEntry" class="war-list"></div></div>
+    <div class="card glass"><h3>🟡 今日觀察</h3><div id="warObserve" class="war-list"></div></div>
+  </div>
+  <div class="grid g2">
+    <div class="card glass"><h3>⛔ 今日禁止進場</h3><div id="warForbid" class="war-list"></div></div>
+    <div class="card glass"><h3>🔻 持股減碼警示</h3><div id="warReduce" class="war-list"></div></div>
+  </div>
+  <div class="card glass"><h3>🚨 停損警示</h3><div id="warStop" class="war-list"></div></div>
 </section>
 
 <!-- ============ 選股中心 ============ -->
@@ -189,6 +215,7 @@
     <div class="gauge" id="coachGauge"><div class="gauge-num" id="coachScore">0</div></div>
     <div class="gauge-tag" id="coachTag">—</div>
   </div>
+  <div class="card glass" id="coachUpgrade"></div>
   <div class="grid g3" id="coachCards"></div>
   <div class="card glass">
     <h3>📝 紀律自評（影響教練評分）</h3>
