@@ -190,6 +190,13 @@ textarea{resize:vertical;min-height:64px}
   border:1px solid var(--line);border-radius:10px;background:var(--panel2);cursor:pointer;font-size:13px;transition:.15s}
 .war-item:hover{border-color:var(--cyan);transform:translateX(2px)}
 
+/* 搜尋快速加入建議 */
+.suggest-box{display:flex;flex-direction:column;gap:4px;margin:-4px 0 10px}
+.suggest-item{padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);
+  cursor:pointer;font-size:13px;transition:.15s}
+.suggest-item:hover{border-color:var(--green);color:var(--green)}
+.suggest-item b{color:var(--cyan)}
+
 /* 進場分區 */
 .zone-pill{display:inline-block;padding:1px 7px;border-radius:6px;font-weight:800;font-size:11px}
 .zone-A{background:rgba(255,206,77,.18);color:var(--yellow)}

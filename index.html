@@ -121,7 +121,8 @@
         <button class="btn primary" id="addStockBtn">＋ 新增股票</button>
       </div>
     </div>
-    <input class="search" id="stockSearch" placeholder="搜尋代號 / 名稱 / 產業…">
+    <input class="search" id="stockSearch" placeholder="輸入代號或名稱（例 2330 / 台積電）即時搜尋、快速加入…">
+    <div id="stockSuggest" class="suggest-box"></div>
     <div class="table-wrap">
       <table id="stockTable">
         <thead><tr>
@@ -234,6 +235,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="stocks-db.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

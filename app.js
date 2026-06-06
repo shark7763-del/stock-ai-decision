@@ -628,7 +628,7 @@ function stockForm(s){
   s=s||{};
   openModal(`<h3>${s.id?'編輯':'新增'}股票</h3>
   <div class="form-grid">
-    ${field('股票代號*','f_code',s.code,'text')}${field('股票名稱','f_name',s.name,'text')}
+    <div><label>股票代號* <small class="muted">(輸入自動帶名稱)</small></label><input id="f_code" type="text" value="${s.code||''}" oninput="codeAutofill()" list="codeList" autocomplete="off"></div>${field('股票名稱','f_name',s.name,'text')}
     ${field('產業類別','f_industry',s.industry,'text')}${field('目前價格','f_price',s.price)}
     ${field('成交量(張)','f_volume',s.volume)}${field('5日均量(張)','f_vol5',s.vol5)}
     ${field('5日均線','f_ma5',s.ma5)}${field('10日均線','f_ma10',s.ma10)}
@@ -653,6 +653,34 @@ function saveStock(id){
 }
 function editStock(id){stockForm(stocks.find(x=>x.id===id))}
 function delStock(id){if(confirm('確定刪除此股票？')){stocks=stocks.filter(x=>x.id!==id);save();renderAll();toast('已刪除')}}
+
+/* 代號 → 自動帶名稱/產業（用內建台股字典） */
+function codeAutofill(){
+  const el=$('#f_code'); if(!el||!window.TW_STOCKS)return;
+  const d=TW_STOCKS[el.value.trim()]; if(!d)return;
+  const nm=$('#f_name'), ind=$('#f_industry');
+  if(nm&&!nm.value) nm.value=d.n;
+  if(ind&&!ind.value) ind.value=d.i;
+}
+/* 由代號快速加入（搜尋建議用） */
+function addByCode(code){const d=(window.TW_STOCKS&&TW_STOCKS[code])||{};stockForm({code,name:d.n||'',industry:d.i||''});}
+/* 建立代號 datalist（表單自動完成） */
+function buildCodeDatalist(){
+  if(!window.TW_STOCKS||document.getElementById('codeList'))return;
+  const dl=document.createElement('datalist');dl.id='codeList';
+  dl.innerHTML=Object.keys(TW_STOCKS).map(c=>`<option value="${c}" label="${TW_STOCKS[c].n}">`).join('');
+  document.body.appendChild(dl);
+}
+/* 搜尋建議：可一鍵加入尚未在股池的股票 */
+function updateStockSuggest(q){
+  const box=$('#stockSuggest'); if(!box)return;
+  q=(q||'').trim();
+  if(!q||!window.TW_STOCKS){box.innerHTML='';return;}
+  const inPool=new Set(stocks.map(s=>s.code));
+  const ql=q.toLowerCase();
+  const matches=Object.keys(TW_STOCKS).filter(c=>!inPool.has(c)&&(c.startsWith(q)||TW_STOCKS[c].n.toLowerCase().includes(ql))).slice(0,8);
+  box.innerHTML=matches.length?matches.map(c=>`<div class="suggest-item" onclick="addByCode('${c}')">＋ <b>${c}</b> ${TW_STOCKS[c].n} <span class="muted">${TW_STOCKS[c].i}</span></div>`).join(''):'';
+}
 
 /* 批量貼上匯入 */
 const BULK_COLS=['code','name','industry','price','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform'];
@@ -682,6 +710,8 @@ function saveBulkStocks(){
     const code=cells[0];
     if(!code){skipped++;return;}
     const o={}; BULK_COLS.forEach((k,i)=>{ if(cells[i]!==undefined&&cells[i]!=='') o[k]=cells[i]; });
+    // 只填代號時，用內建字典自動補名稱/產業
+    if(window.TW_STOCKS&&TW_STOCKS[code]){ if(!o.name)o.name=TW_STOCKS[code].n; if(!o.industry)o.industry=TW_STOCKS[code].i; }
     const idx=stocks.findIndex(x=>x.code===code);
     if(idx>=0){stocks[idx]={...stocks[idx],...o};updated++;}
     else{stocks.push({id:uid(),...o});added++;}
@@ -778,7 +808,7 @@ $('#importStockBtn').onclick=()=>bulkStockForm();
 $('#addStockBtn').onclick=()=>stockForm();
 $('#addHoldBtn').onclick=()=>holdForm();
 $('#addTradeBtn').onclick=()=>tradeForm();
-$('#stockSearch').oninput=e=>renderScreener(e.target.value);
+$('#stockSearch').oninput=e=>{renderScreener(e.target.value);updateStockSuggest(e.target.value);};
 $('#entrySelect').onchange=e=>showEntry(e.target.value);
 $('#exitSelect').onchange=e=>showExit(e.target.value);
 $('#rkCalc').onclick=calcRisk;
@@ -817,5 +847,6 @@ function seed(){
 
 /* ---------- 啟動 ---------- */
 seed();
+buildCodeDatalist();
 $('#accCapital').value=cfg.capital; $('#accRisk').value=cfg.risk;
 renderAll();
