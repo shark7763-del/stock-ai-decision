@@ -15,7 +15,9 @@ const CODES = ['2330','2317','2454','2308','2382','2412','2891','2881','2882','2
 '3711','2886','2884','1216','2885','2357','3034','2892','2890','5880','2880','3008',
 '2883','2002','1303','1301','2887','3037','2207','2603','2379','4938','2345','3045',
 '2912','1326','2395','5871','6669','3231','2801','2227','1101','2618','2408','3661',
-'4904','9910','2474','6505'];
+'4904','9910','2474','6505',
+// 常見 ETF
+'0050','0056','006208','00878','00919','00929','00940','00713','00891','00892'];
 
 const MONTHS = 5;          // 抓近 5 個月，確保 ≥60 個交易日
 const DELAY  = 1200;       // 每次 API 間隔(ms)，避免被限流
@@ -87,8 +89,10 @@ async function fetchStock(code) {
   const vols = rows.map(r => Math.round(num(r[1]) / 1000)); // 股 → 張
   if (closes.length < 5) return null;
   const { k, d } = kd(highs, lows, closes);
+  const lastC = closes[closes.length - 1], prevC = closes.length >= 2 ? closes[closes.length - 2] : lastC;
+  const chg = prevC ? +(((lastC - prevC) / prevC) * 100).toFixed(2) : 0;
   return {
-    code,
+    code, chg,
     price: closes[closes.length - 1],
     volume: vols[vols.length - 1],
     vol5: Math.round(ma(vols, 5)),
@@ -146,7 +150,7 @@ async function fetchInstitutional(dateAD) {
     const it = inst[code] || { foreign: 0, trust: 0 };
     stocks.push({
       code, name: (names[code] && names[code].n) || '', industry: (names[code] && names[code].i) || '',
-      price: s.price, volume: s.volume, vol5: s.vol5,
+      price: s.price, chg: s.chg, volume: s.volume, vol5: s.vol5,
       ma5: s.ma5, ma10: s.ma10, ma20: s.ma20, ma60: s.ma60,
       rsi: s.rsi, k: s.k, d: s.d, macd: s.macd,
       foreign: it.foreign, trust: it.trust

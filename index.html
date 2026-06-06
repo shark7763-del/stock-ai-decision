@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0a0e17">
-<title>台股 AI 買賣決策系統</title>
+<title>AI Trade Coach Pro · 台股 AI 買賣決策系統</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
@@ -14,9 +14,9 @@
 <!-- ===== 頂部列 ===== -->
 <header class="topbar glass">
   <div class="brand">
-    <span class="logo">股</span>
+    <span class="logo">AI</span>
     <div class="brand-txt">
-      <h1>台股 AI 買賣決策系統</h1>
+      <h1>AI Trade Coach Pro</h1>
       <small id="todayDate">—</small>
     </div>
   </div>
@@ -32,6 +32,8 @@
 <nav class="nav glass" id="nav">
   <button class="nav-btn active" data-tab="dashboard">🏠 儀表板</button>
   <button class="nav-btn" data-tab="war">🎯 今日作戰室</button>
+  <button class="nav-btn" data-tab="scanner">📡 AI 掃描器</button>
+  <button class="nav-btn" data-tab="radar">📰 情緒雷達</button>
   <button class="nav-btn" data-tab="screener">🔍 選股中心</button>
   <button class="nav-btn" data-tab="entry">🟢 進場引擎</button>
   <button class="nav-btn" data-tab="exit">🔴 出場引擎</button>
@@ -61,6 +63,32 @@
     <div class="card glass signal-card green"><div class="big" id="dbStrong">0</div><div>今日強勢股</div></div>
     <div class="card glass signal-card yellow"><div class="big" id="dbObserve">0</div><div>今日觀察股</div></div>
     <div class="card glass signal-card red"><div class="big" id="dbDanger">0</div><div>今日危險股</div></div>
+  </div>
+
+  <div class="grid kpi-grid">
+    <div class="card glass kpi"><span class="kpi-label">平均 AI 進場分</span><span class="kpi-val" id="dbAvgEntry">—</span><div class="bar"><i id="dbAvgEntryBar"></i></div></div>
+    <div class="card glass kpi"><span class="kpi-label">平均 AI 逃命分</span><span class="kpi-val warn" id="dbAvgEsc">—</span><div class="bar"><i id="dbAvgEscBar" class="red"></i></div></div>
+    <div class="card glass kpi"><span class="kpi-label">市場新聞溫度</span><span class="kpi-val" id="dbNewsTemp">—</span><div class="bar"><i id="dbNewsTempBar"></i></div></div>
+    <div class="card glass kpi"><span class="kpi-label">今日操作建議</span><span class="kpi-val" id="dbOp">—</span><span class="muted" id="dbCap"></span></div>
+  </div>
+
+  <div class="card glass">
+    <div class="card-head"><h3>🤖 今日 AI 推薦股票</h3><button class="btn sm" onclick="switchTab('scanner')">開啟掃描器 →</button></div>
+    <div id="recoZone"></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card glass"><h3>🚀 漲幅潛力榜</h3><div id="listMomentum" class="rank-list"></div></div>
+    <div class="card glass"><h3>🌡️ 追高風險榜</h3><div id="listFomo" class="rank-list"></div></div>
+  </div>
+  <div class="grid g2">
+    <div class="card glass"><h3>🔥 討論最熱榜</h3><div id="listSocial" class="rank-list"></div></div>
+    <div class="card glass"><h3>💥 題材強度榜</h3><div id="listTheme" class="rank-list"></div></div>
+  </div>
+
+  <div class="card glass">
+    <h3>🗂️ 今日事件驅動股票清單</h3>
+    <div id="eventZone" class="event-list"></div>
   </div>
 
   <div class="grid g2">
@@ -111,6 +139,39 @@
   <div class="card glass"><h3>🚨 停損警示</h3><div id="warStop" class="war-list"></div></div>
 </section>
 
+<!-- ============ AI 掃描器 ============ -->
+<section class="tab" id="scanner">
+  <div class="card glass">
+    <div class="card-head"><h3>📡 AI 股票掃描器</h3><button class="btn primary" id="scanBtn">🔍 一鍵掃描</button></div>
+    <p class="muted">依 AI 漲幅潛力分數排序，可依產業／類型／風險篩選。點「分析」看完整解讀。</p>
+    <div class="scan-filters">
+      <select class="select" id="scanInd"><option value="">全部產業</option></select>
+      <select class="select" id="scanType">
+        <option value="">全部類型</option><option>強勢股</option><option>突破股</option><option>低點反彈</option><option>危險股</option>
+      </select>
+      <select class="select" id="scanRisk">
+        <option value="">全部風險</option><option value="low">追高風險低</option><option value="mid">中度風險</option><option value="high">追高風險高</option>
+      </select>
+      <span class="badge" id="scanCount">0 檔</span>
+    </div>
+    <div class="table-wrap">
+      <table id="scanTable"><thead><tr>
+        <th>代號</th><th>名稱</th><th>產業</th><th>現價</th><th>漲跌</th>
+        <th>潛力</th><th>進場</th><th>逃命</th><th>追高險</th><th>討論</th><th>類型</th><th>建議</th><th>操作</th>
+      </tr></thead><tbody id="scanBody"></tbody></table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 情緒雷達 ============ -->
+<section class="tab" id="radar">
+  <div class="card glass">
+    <h3>📰 AI 新聞情緒 ＋ 💬 社群討論溫度</h3>
+    <p class="muted">整合新聞情緒與網路討論熱度（目前為模擬資料，架構已預留 API 接點）。依綜合熱度排序，點卡片看完整分析。</p>
+  </div>
+  <div id="radarZone" class="radar-grid"></div>
+</section>
+
 <!-- ============ 選股中心 ============ -->
 <section class="tab" id="screener">
   <div class="card glass">
@@ -127,7 +188,7 @@
     <div class="table-wrap">
       <table id="stockTable">
         <thead><tr>
-          <th>代號</th><th>名稱</th><th>產業</th><th>價格</th><th>量</th>
+          <th>代號</th><th>名稱</th><th>產業</th><th>價格</th><th>漲跌</th><th>量</th>
           <th>5MA</th><th>20MA</th><th>RSI</th><th>K/D</th><th>外資</th>
           <th>人格</th><th>五鐵律</th><th>抄底</th><th>逃命</th><th>操作</th>
         </tr></thead>

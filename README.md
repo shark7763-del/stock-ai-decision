@@ -1,7 +1,18 @@
-# 台股 AI 買賣決策系統
+# AI Trade Coach Pro · 台股 AI 買賣決策系統
 
 純前端（HTML5 / CSS3 / ES6）＋ LocalStorage 的台股**決策輔助**系統（非下單系統）。
 可直接部署 GitHub Pages，手機與電腦皆可使用。
+
+> ⚠️ 本系統為技術分析與交易紀律輔助工具，提供「列入觀察／等待回測／風險升高」等評估，
+> **不提供買賣保證、不構成投資建議**。所有分數僅供研究參考。
+
+## AI 引擎（重點）
+- **AI 進場分數** = 趨勢×0.25 + 量能×0.20 + 籌碼×0.20 + 低點反彈×0.15 + 突破×0.15 − 風險×0.20
+- **AI 逃命分數**：RSI 過熱 / KD 死叉 / 跌破均線 / 法人賣超 / 量增價跌…
+- **AI 漲幅潛力分數** = 趨勢×0.25 + 量能×0.20 + 籌碼×0.20 + 新聞情緒×0.15 + 討論熱度×0.10 + 題材強度×0.10 − 追高風險×0.20
+- **追高風險（FOMO）分數**：乖離過大 / 討論暴增 / 融資大增 / 利多出盡…
+- 新聞情緒 + 社群討論目前為**模擬資料**，已預留 API 接點：
+  `fetchNewsData / fetchSocialDiscussionData / analyzeNewsSentiment / analyzeSocialSentiment / calculateMomentumScore / calculateFomoRiskScore / generateAIStockAdvice`
 
 ## 功能模組
 - 🏠 儀表板：市場溫度 / 風險指數 / AI 市場評分儀表 / 損益總覽 / 資產曲線

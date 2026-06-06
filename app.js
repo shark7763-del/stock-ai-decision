@@ -210,6 +210,404 @@ function exitGrade(score){
 }
 
 /* ===================================================================
+   AI Trade Coach 引擎：六大子分數 + AI進場/逃命 + 分類 + 教練語氣
+   =================================================================== */
+const clamp=(v,a=0,b=100)=>Math.max(a,Math.min(b,Math.round(v)));
+const TYPE_META={
+  '強勢股':{c:'teal',e:'🚀'},'低點反彈':{c:'purple',e:'🪂'},
+  '突破股':{c:'gold',e:'⚡'},'危險股':{c:'red',e:'⚠️'}
+};
+function analyze(s){
+  const price=n(s.price),ma5=n(s.ma5),ma10=n(s.ma10),ma20=n(s.ma20),ma60=n(s.ma60);
+  const rsi=n(s.rsi),k=n(s.k),d=n(s.d),chg=n(s.chg);
+  const fo=n(s.foreign),tr=n(s.trust),mg=n(s.margin);
+  const vr=n(s.vol5)?n(s.volume)/n(s.vol5):1;
+  const bias=ma20?((price-ma20)/ma20)*100:0;
+
+  // 趨勢分數
+  let trend=0; if(price>ma5)trend+=15; if(price>ma20)trend+=20; if(price>ma60)trend+=15;
+  if(ma5>ma10)trend+=12; if(ma10>ma20)trend+=13; if(ma20>ma60)trend+=25; trend=clamp(trend);
+  // 量能分數
+  let vol; if(vr>3)vol=75; else if(vr>=1.2)vol=90; else if(vr>=0.9)vol=70; else if(vr>=0.6)vol=50; else vol=32;
+  if(chg>0)vol=clamp(vol+10);
+  // 籌碼分數
+  let chips=50; chips+=fo>0?22:fo<0?-22:0; chips+=tr>0?14:tr<0?-10:0; chips+=mg<0?8:mg>0?-6:0; chips=clamp(chips);
+  // 低點反彈分數（沿用抄底引擎）
+  const rebound=bottomIndex(s).score;
+  // 突破分數
+  let bk=0; const ph=n(s.prevHigh);
+  if(ph>0){ if(price>=ph)bk+=45; else {const dd=(ph-price)/ph; bk+= dd<=0.03?35:dd<=0.06?22:dd<=0.10?10:0;} }
+  else { bk+= price>ma60?18:0; }
+  bk+= price>ma20?15:0; bk+= vr>=1.5?25:vr>=1.2?15:0; bk+= ma20>ma60?15:0; const breakout=clamp(bk);
+  // 風險分數
+  let risk=0; risk+= rsi>=80?30:rsi>=70?20:rsi>=65?10:0;
+  risk+= bias>=15?25:bias>=10?18:bias>=7?10:0; risk+= vr>=3?15:0; risk+= mg>0?8:0;
+  risk+= k>=85?10:0; risk+= (chg<0&&price<ma5)?10:0; risk=clamp(risk);
+
+  // AI 進場分數（指定公式）
+  const entry=clamp(trend*0.25+vol*0.20+chips*0.20+rebound*0.15+breakout*0.15-risk*0.20);
+  // AI 逃命分數
+  let esc=0;
+  if(rsi>80)esc+=20; if(k<d)esc+=12; if(price<ma5)esc+=12; if(price<ma20)esc+=18;
+  if(fo<0)esc+=12; if(tr<0)esc+=6; if(mg>0&&chg<0)esc+=10; if(vr>=1.5&&chg<0)esc+=12; if(bias>=12&&chg<0)esc+=8;
+  const escape=clamp(esc);
+
+  // 類型分類
+  let type=null;
+  if(escape>=70||risk>=75) type='危險股';
+  else if(entry>=72&&trend>=70&&escape<60) type='強勢股';
+  else if(breakout>=65&&entry>=58) type='突破股';
+  else if(rebound>=65) type='低點反彈';
+  const meta=TYPE_META[type]||{c:'',e:'•'};
+
+  // 建議動作（限定安全用語）
+  let action;
+  if(type==='危險股'||escape>=80) action='建議減碼';
+  else if(escape>=60) action='風險升高';
+  else if(type==='低點反彈'&&entry>=52) action='小部位試單';
+  else if(entry>=85) action='高分候選股';
+  else if(entry>=75) action='列入觀察';
+  else if(entry>=60) action='等待回測';
+  else if(entry>=40) action='不追高';
+  else action='暫不進場';
+
+  // 買點 / 停損 / 目標 / 部位
+  const buyPoint=+((ma20>0&&ma20<price)?ma20:price*0.97).toFixed(2);
+  const stop=+(Math.min(buyPoint*0.92,(ma20||buyPoint)*0.96)).toFixed(2);
+  const tp=targetPrices(s);
+  const posPct = type==='危險股'?0 : (entry>=85&&escape<50)?30 : entry>=75?20 : (type==='低點反彈'&&entry>=52)?10 : entry>=60?10 : 0;
+
+  const ctx={trend,vol,chips,rebound,breakout,risk,entry,escape,type,bias,vr,rsi,fo,tr};
+  return {trend,vol,chips,rebound,breakout,risk,entry,escape,type,meta,action,buyPoint,stop,
+    t1:+tp.t1.toFixed(2),t2:+tp.t2.toFixed(2),posPct,reasons:buildReasons(ctx),tip:coachTip(ctx),bias,vr};
+}
+function buildReasons(x){
+  const r=[];
+  if(x.trend>=70) r.push(`趨勢分 ${x.trend}：均線多頭排列、股價站上均線`);
+  else if(x.trend<=40) r.push(`趨勢分 ${x.trend}：均線排列偏弱，方向未明`);
+  if(x.chips>=65) r.push(`籌碼分 ${x.chips}：法人偏多、籌碼集中`);
+  else if(x.chips<=40) r.push(`籌碼分 ${x.chips}：法人賣超、籌碼鬆動`);
+  if(x.rebound>=65) r.push(`低點反彈分 ${x.rebound}：RSI／KD 進入相對低檔`);
+  if(x.breakout>=65) r.push(`突破分 ${x.breakout}：貼近前高、帶量挑戰壓力`);
+  if(x.vol>=85) r.push(`量能分 ${x.vol}：成交量明顯放大`);
+  if(x.risk>=60) r.push(`風險分 ${x.risk}：乖離／過熱偏高，追高風險大`);
+  if(x.escape>=60) r.push(`逃命分 ${x.escape}：已出現轉弱訊號`);
+  if(!r.length) r.push(`綜合條件普通（進場分 ${x.entry}），訊號尚未明確`);
+  return r.slice(0,3);
+}
+function coachTip(x){
+  if(x.type==='危險股'||x.escape>=70) return '風險升高了，先保護獲利。守紀律比預測高點更重要，不要凹單。';
+  if(x.entry>=75&&x.escape>=55) return '這檔分數雖然高，但逃命分數也偏高，代表漲多後風險增加，適合觀察、不適合重倉。';
+  if(x.type==='低點反彈') return '現在不是猜最低點，而是等風險變小、勝率變高時再出手，先用小部位試單。';
+  if(x.entry>=75) return '這檔目前條件不錯，但不要急著追高。真正好的進場點，是價格回測支撐但沒有跌破的時候。';
+  if(x.entry>=60) return '訊號還在醞釀，與其現在追，不如等回測不破再進，勝率更高。';
+  return '條件還不成熟，與其勉強進場，不如保留現金、等更明確的訊號。';
+}
+function aiOverview(){
+  const list=stocks.map(s=>analyze(s));
+  const ae=list.length?Math.round(list.reduce((a,x)=>a+x.entry,0)/list.length):0;
+  const ax=list.length?Math.round(list.reduce((a,x)=>a+x.escape,0)/list.length):0;
+  const strong=list.filter(x=>x.type==='強勢股').length;
+  const danger=list.filter(x=>x.type==='危險股').length;
+  const observe=list.filter(x=>x.type!=='危險股'&&x.entry>=60).length;
+  const mk=marketInfo();
+  const dangerRatio=list.length?danger/list.length:0;
+  let op,cap;
+  if(ae>=70&&mk.state!=='空方'){op='積極';cap=30;} else {op='保守';cap=20;}
+  if((mk.has&&mk.state==='空方')||ax>=60||dangerRatio>0.3){op='觀望';cap=10;}
+  if(mk.has&&mk.risk>70){op='觀望';cap=0;}
+  return {ae,ax,strong,observe,danger,op,cap,list};
+}
+
+/* ===================================================================
+   AI 資料來源架構（目前 mock，未來可串接 API）
+   新聞情緒 / 社群討論 / 漲幅潛力 / 追高風險
+   =================================================================== */
+function _h(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function _rng(seed){let t=seed>>>0;return ()=>{t+=0x6D2B79F5;let x=Math.imul(t^t>>>15,t|1);x^=x+Math.imul(x^x>>>7,x|61);return ((x^x>>>14)>>>0)/4294967296;};}
+function pick(arr,seed,k){const r=_rng(seed);const a=arr.slice();const out=[];for(let i=0;i<k&&a.length;i++)out.push(a.splice(Math.floor(r()*a.length),1)[0]);return out;}
+const NEWS_POS=['法人買超','營收創高','AI訂單挹注','擴產題材','調升目標價','外資調升評等','獲利成長','接獲大單','毛利率提升','新品放量'];
+const NEWS_NEG=['法人賣超','營收月減','調降評等','庫存偏高','匯兌損失','利多出盡','融資過高','獲利衰退','訂單遞延','價格競爭'];
+const SOC_BULL=['上車','看好','突破','噴出','抱緊','還會漲','卡位','低基期'];
+const SOC_BEAR=['套牢','出貨','住套房','看空','快跑','韭菜','過高','停損'];
+
+/* ---- 未來 API 接點（先回傳 mock）---- */
+function fetchStockPriceData(s){return {price:n(s.price),chg:n(s.chg),volume:n(s.volume),vol5:n(s.vol5)};}
+function fetchInstitutionalData(s){return {foreign:n(s.foreign),trust:n(s.trust),margin:n(s.margin)};}
+function fetchNewsData(s){
+  const r=_rng(_h('N'+s.code)); const chg=n(s.chg), vr=n(s.vol5)?n(s.volume)/n(s.vol5):1;
+  const hot=clamp(18+(vr-1)*28+Math.abs(chg)*6+r()*30);
+  const n24=Math.max(0,Math.round(hot/14+r()*4));
+  const n3=n24+Math.round(hot/8+r()*6);
+  const n7=n3+Math.round(hot/5+r()*10);
+  let pos=clamp(48+chg*4+(n(s.foreign)>0?8:n(s.foreign)<0?-10:0)+(r()*18-9),8,86);
+  let neg=clamp((100-pos)*(0.4+r()*0.4),4,70);
+  let neu=clamp(100-pos-neg,0,100);
+  return {n24,n3,n7,pos,neg,neu,hot};
+}
+function fetchSocialDiscussionData(s){
+  const r=_rng(_h('S'+s.code)); const chg=n(s.chg), rsi=n(s.rsi), vr=n(s.vol5)?n(s.volume)/n(s.vol5):1;
+  const base=clamp(15+(vr-1)*25+Math.abs(chg)*5+(rsi>70?15:0)+r()*30);
+  const ptt=Math.round(base*1.2+r()*20), dcard=Math.round(base*0.6+r()*12), yt=Math.round(base*0.4+r()*8);
+  const change=Math.round((r()*170-40)+(Math.abs(chg)>3?60:0));
+  let pos=clamp(46+chg*4+(rsi>75?10:0)+(r()*18-9),10,88);
+  let neg=clamp((100-pos)*(0.4+r()*0.4),4,70);
+  let neu=clamp(100-pos-neg,0,100);
+  return {ptt,dcard,yt,total:ptt+dcard+yt,change,pos,neg,neu,base};
+}
+/* ---- NLP 情緒分析（mock 規則）---- */
+function analyzeNewsSentiment(s){
+  const nd=fetchNewsData(s); const name=s.name||s.code;
+  const sentiment=clamp(50+(nd.pos-nd.neg)*0.6);
+  const heat=nd.hot;
+  const fresh=clamp(nd.n7?(nd.n24/nd.n7)*300:0);
+  const theme=clamp(heat*0.5+sentiment*0.3+(heat>=60?20:heat>=40?10:0));
+  const posKw=pick(NEWS_POS,_h('p'+s.code),sentiment>=55?2:1);
+  const negKw=pick(NEWS_NEG,_h('q'+s.code),sentiment<=45?2:1);
+  const chg=n(s.chg),price=n(s.price),ph=n(s.prevHigh);
+  const title=`${name}${sentiment>=55?'：'+posKw[0]+'，買盤回流':sentiment<=45?'：'+negKw[0]+'，賣壓轉強':'：消息面中性，等待方向'}`;
+  const reflected=(nd.n7>=8&&(chg<=0||(ph>0&&price<ph)))?'可能已部分反映':(sentiment>=60&&chg>0)?'仍在發酵中':'尚未充分反映';
+  const read=sentiment>=60?`${name} 近期新聞偏多、市場關注度升高，題材正在發酵；惟利多${reflected}，仍需量價確認。`
+    :sentiment<=45?`${name} 新聞面偏空、出現賣壓訊號，操作保守為宜，等待情緒回穩。`
+    :`${name} 消息面中性，靜待催化劑與量價配合。`;
+  return {...nd,sentiment,heat,fresh,theme,posKw,negKw,title,reflected,read};
+}
+function analyzeSocialSentiment(s){
+  const sd=fetchSocialDiscussionData(s); const rsi=n(s.rsi); const name=s.name||s.code;
+  const heat=clamp(sd.base*0.7+(sd.change>80?20:sd.change>30?10:0)+(sd.total>120?10:0));
+  const retailFomo=clamp(heat*0.45+sd.pos*0.3+(sd.change>=100?20:sd.change>=50?10:0)+(rsi>=75?12:0));
+  const bullKw=pick(SOC_BULL,_h('b'+s.code),sd.pos>=55?2:1);
+  const bearKw=pick(SOC_BEAR,_h('c'+s.code),sd.pos<=45?2:1);
+  const read=retailFomo>=70?`散戶討論明顯升溫、情緒偏樂觀，留意過熱與追高風險，別被情緒帶著走。`
+    :heat>=60?`${name} 社群關注度升高、討論轉熱，可列入觀察但需量價確認。`
+    :`討論熱度普通，尚未形成明顯人氣，靜待資金與題材表態。`;
+  return {...sd,heat,retailFomo,bullKw,bearKw,read};
+}
+/* ---- 漲幅潛力 / 追高風險 ---- */
+function calculateFomoRiskScore(s,tech,news,social){
+  const rsi=n(s.rsi),k=n(s.k),d=n(s.d),chg=n(s.chg),mg=n(s.margin),fo=n(s.foreign),price=n(s.price),ph=n(s.prevHigh);
+  let f=0;
+  if(tech.bias>=12)f+=15; if(rsi>80)f+=15; if(k>=80&&k<d)f+=12;
+  if(social.change>=100)f+=12; if(mg>=3000)f+=10; if(fo<0)f+=10;
+  if(news.n7>=8&&ph>0&&price<ph)f+=10; if(tech.vr>=2.5&&chg<0)f+=10;
+  if(news.n7>=10&&news.sentiment>=60&&chg<=0)f+=8;
+  return clamp(f);
+}
+function calculateMomentumScore(tech,news,social,fomo){
+  return clamp(tech.trend*0.25+tech.vol*0.20+tech.chips*0.20+news.sentiment*0.15+social.heat*0.10+news.theme*0.10-fomo*0.20);
+}
+/* ---- 統合：每檔股票完整 AI 解讀 ---- */
+function generateAIStockAdvice(s){
+  const tech=analyze(s), news=analyzeNewsSentiment(s), social=analyzeSocialSentiment(s);
+  const fomo=calculateFomoRiskScore(s,tech,news,social);
+  const momentum=calculateMomentumScore(tech,news,social,fomo);
+  const price=n(s.price);
+  const r1=Math.max(tech.t1, n(s.prevHigh)||tech.t1), r2=tech.t2;
+  const tags=[];
+  if(news.sentiment>=65&&news.heat>=55&&n(s.chg)>=0)tags.push('新聞利多股');
+  if(social.change>=60&&social.heat>=60)tags.push('討論升溫股');
+  if(news.theme>=70)tags.push('題材爆發股');
+  if(n(s.foreign)>0&&n(s.trust)>0&&tech.chips>=65)tags.push('法人加碼股');
+  if(tech.breakout>=65)tags.push('技術突破股');
+  if(news.heat>=60&&(n(s.chg)<0||(n(s.prevHigh)>0&&price<n(s.prevHigh)))&&fomo>=60)tags.push('利多出盡高風險股');
+  if(social.retailFomo>=70)tags.push('散戶過熱警告股');
+  const scen={
+    up:`量價配合站穩，可挑戰 ${r1.toFixed(2)} / ${r2.toFixed(2)}（約 +${(((r1-price)/price)*100).toFixed(1)}% ~ +${(((r2-price)/price)*100).toFixed(1)}%）`,
+    mid:`於 ${tech.buyPoint.toFixed(2)} ~ ${r1.toFixed(2)} 區間整理，等待量價表態`,
+    risk:`跌破 ${tech.stop.toFixed(2)} 支撐則短線轉弱，需停損保護（約 ${(((tech.stop-price)/price)*100).toFixed(1)}%）`
+  };
+  let mAdvice;
+  if(fomo>=80)mAdvice='風險已經升高，不建議追高';
+  else if(momentum>=85)mAdvice='短線動能偏強，可列入觀察（仍須看風險）';
+  else if(momentum>=75)mAdvice='有上漲潛力，等待回測不破再評估';
+  else if(momentum>=60)mAdvice='普通偏多，需要等量價確認';
+  else if(momentum>=40)mAdvice='動能不足，暫不追蹤';
+  else mAdvice='風險偏高或動能不足，先觀望';
+  const judge=fomo>=70?'熱度高但追高風險升高':momentum>=75&&fomo<60?'短線動能偏強、市場關注度升高'
+    :news.theme>=70?'題材正在發酵':momentum>=60?'偏多整理、需量價確認':'訊號尚未明確';
+  return {tech,news,social,fomo,momentum,tags,scen,mAdvice,judge,watch:tech.buyPoint,stop:tech.stop,r1:+r1.toFixed(2),r2:+r2.toFixed(2)};
+}
+let _advCache=null,_advKey='';
+function advList(){
+  const key=stocks.map(s=>s.code+s.price+s.chg).join('|');
+  if(_advKey!==key){_advCache=stocks.map(s=>({s,d:generateAIStockAdvice(s)}));_advKey=key;}
+  return _advCache;
+}
+
+/* ===================================================================
+   AI 首頁 / 推薦 / 排行 / 事件驅動 渲染
+   =================================================================== */
+const setText=(sel,v)=>{const e=$(sel);if(e)e.textContent=v;};
+const setBar=(sel,v)=>{const e=$(sel);if(e)e.style.width=clamp(v)+'%';};
+const EVENT_TYPES=[
+  {k:'新聞利多股',c:'teal',e:'📰'},{k:'討論升溫股',c:'purple',e:'🔥'},{k:'題材爆發股',c:'gold',e:'💥'},
+  {k:'法人加碼股',c:'teal',e:'🏦'},{k:'技術突破股',c:'gold',e:'⚡'},
+  {k:'利多出盡高風險股',c:'red',e:'🚧'},{k:'散戶過熱警告股',c:'red',e:'🌡️'}
+];
+
+function renderAIHome(){
+  if(!$('#recoZone'))return;
+  const ov=aiOverview(), adv=advList();
+  setText('#dbAvgEntry',ov.ae); setBar('#dbAvgEntryBar',ov.ae);
+  setText('#dbAvgEsc',ov.ax); setBar('#dbAvgEscBar',ov.ax);
+  setText('#dbOp',ov.op); setText('#dbCap',ov.cap?('最多 '+ov.cap+'%'):'空手');
+  setText('#dbStrong',ov.strong); setText('#dbObserve',ov.observe); setText('#dbDanger',ov.danger);
+  const newsTemp=adv.length?Math.round(adv.reduce((a,x)=>a+x.d.news.heat,0)/adv.length):0;
+  setText('#dbNewsTemp',newsTemp); setBar('#dbNewsTempBar',newsTemp);
+  renderReco(adv);
+  topList('#listMomentum',adv.slice().sort((a,b)=>b.d.momentum-a.d.momentum).slice(0,5),x=>`潛力 ${x.d.momentum}`);
+  topList('#listFomo',adv.slice().sort((a,b)=>b.d.fomo-a.d.fomo).slice(0,5),x=>`風險 ${x.d.fomo}`,'neg');
+  topList('#listSocial',adv.slice().sort((a,b)=>b.d.social.heat-a.d.social.heat).slice(0,5),x=>`熱度 ${x.d.social.heat}`);
+  topList('#listTheme',adv.slice().sort((a,b)=>b.d.news.theme-a.d.news.theme).slice(0,5),x=>`題材 ${x.d.news.theme}`);
+  renderEvents(adv);
+}
+function topList(sel,arr,fn,cls){
+  const box=$(sel); if(!box)return;
+  box.innerHTML=arr.length?arr.map((x,i)=>`<div class="rank-item" onclick="showAnalysis('${x.s.id}')"><span class="rank-no">${i+1}</span><span class="rank-name">${x.s.code} ${x.s.name||''}</span><span class="rank-val ${cls||''}">${fn(x)}</span></div>`).join(''):'<p class="muted">—</p>';
+}
+function renderReco(adv){
+  const zone=$('#recoZone'); if(!zone)return;
+  let html='';
+  ['強勢股','突破股','低點反彈','危險股'].forEach(t=>{
+    const arr=adv.filter(x=>x.d.tech.type===t).sort((p,q)=> t==='危險股'?q.d.tech.escape-p.d.tech.escape:q.d.momentum-p.d.momentum).slice(0,3);
+    if(!arr.length)return;
+    const meta=TYPE_META[t];
+    html+=`<h4 class="reco-h ${meta.c}">${meta.e} ${t}（${adv.filter(x=>x.d.tech.type===t).length}）</h4><div class="reco-grid">${arr.map(x=>recCard(x.s,x.d)).join('')}</div>`;
+  });
+  zone.innerHTML=html||'<p class="muted">目前股池無明確分類標的，請新增股票或「載入今日數據」。</p>';
+}
+function recCard(s,d){
+  const a=d.tech, col=a.meta.c||'gray';
+  return `<div class="reco-card ${col}" onclick="showAnalysis('${s.id}')">
+    <div class="rc-top">
+      <div><span class="rc-type ${col}">${a.meta.e} ${a.type||'觀察'}</span>
+        <div class="rc-name">${s.code} ${s.name||''}</div>
+        <div class="muted">${s.industry||''} · ${fmt(s.price)} <span class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):''}</span></div></div>
+      <div class="rc-scores"><div class="rc-sc"><b>${d.momentum}</b><span>潛力</span></div><div class="rc-sc"><b class="${d.fomo>=60?'neg':''}">${d.fomo}</b><span>追高險</span></div></div>
+    </div>
+    <div class="rc-mini"><span>進場 ${a.entry}</span><span>逃命 ${a.escape}</span><span>情緒 ${d.news.sentiment}</span><span>熱度 ${d.social.heat}</span><span>題材 ${d.news.theme}</span></div>
+    <div class="rc-action ${a.entry>=75&&d.fomo<60?'go':d.fomo>=60?'stop':'watch'}">${a.action} · 部位 ${a.posPct}%</div>
+    <div class="rc-grid"><div><span>觀察價</span><b>${d.watch}</b></div><div><span>停損</span><b>${d.stop}</b></div><div><span>壓力1</span><b>${d.r1}</b></div><div><span>壓力2</span><b>${d.r2}</b></div></div>
+    <div class="rc-news">📰 ${d.news.title}</div>
+    <div class="rc-kw">${d.news.posKw.map(x=>`<span class="kw pos">${x}</span>`).join('')}${d.social.bullKw.map(x=>`<span class="kw soc">${x}</span>`).join('')}</div>
+    <div class="rc-tip">🧭 ${a.tip}</div>
+  </div>`;
+}
+function renderEvents(adv){
+  const box=$('#eventZone'); if(!box)return;
+  box.innerHTML=EVENT_TYPES.map(ev=>{
+    const arr=adv.filter(x=>x.d.tags.includes(ev.k));
+    return `<div class="event-row"><span class="event-tag ${ev.c}">${ev.e} ${ev.k}</span><div class="event-chips">${arr.length?arr.map(x=>`<span class="chip" onclick="showAnalysis('${x.s.id}')">${x.s.code} ${x.s.name||''}</span>`).join(''):'<span class="muted">—</span>'}</div></div>`;
+  }).join('');
+}
+
+/* 完整分析 modal（含技術/新聞/社群/情境/壓力）*/
+function showAnalysis(id){
+  let s=stocks.find(x=>x.id===id), isHold=false;
+  if(!s){const h=holds.find(x=>x.id===id); if(h){s=holdToStock(h);isHold=true;}}
+  if(!s)return;
+  const d=generateAIStockAdvice(s), a=d.tech, pe=persona(s);
+  const col=a.meta.c||'gray';
+  const sb=(lbl,v,red)=>`<div class="ana-row"><span>${lbl}</span><div class="ana-bar"><i class="${red?'r':''}" style="width:${clamp(v)}%"></i></div><b>${clamp(v)}</b></div>`;
+  const inPool=!!stocks.find(x=>x.code===s.code);
+  openModal(`<h3>🔬 完整分析 · ${s.code} ${s.name||''}</h3>
+   <div class="ana-head"><span class="rc-type ${col}">${a.meta.e} ${a.type||'未分類'}</span> <span class="persona">${pe.emoji}${pe.type}</span>
+     <span class="muted">${s.industry||''} · ${fmt(s.price)} <span class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):''}</span></span></div>
+
+   <div class="ana-big3">
+     <div class="b3"><span>AI 漲幅潛力</span><b>${d.momentum}</b></div>
+     <div class="b3"><span>AI 進場分</span><b>${a.entry}</b></div>
+     <div class="b3"><span>追高風險</span><b class="${d.fomo>=60?'neg':''}">${d.fomo}</b></div>
+   </div>
+   <div class="rc-action ${a.entry>=75&&d.fomo<60?'go':d.fomo>=60?'stop':'watch'}">${a.action}　|　${d.mAdvice}　·　建議部位 ${a.posPct}%</div>
+
+   <h4 class="ana-h">📊 技術面</h4>
+   <div class="ana-scores">${sb('趨勢',a.trend)}${sb('量能',a.vol)}${sb('籌碼',a.chips)}${sb('低點反彈',a.rebound)}${sb('突破',a.breakout)}${sb('追高風險',d.fomo,true)}${sb('AI逃命',a.escape,true)}</div>
+
+   <h4 class="ana-h">📰 新聞情緒</h4>
+   <div class="senti-bar"><i class="pos" style="width:${d.news.pos}%"></i><i class="neu" style="width:${d.news.neu}%"></i><i class="neg" style="width:${d.news.neg}%"></i></div>
+   <div class="senti-leg"><span class="pos">正 ${d.news.pos}%</span><span class="muted">中 ${d.news.neu}%</span><span class="neg">負 ${d.news.neg}%</span></div>
+   <div class="ana-scores">${sb('新聞情緒',d.news.sentiment)}${sb('新聞熱度',d.news.heat)}${sb('新鮮度',d.news.fresh)}${sb('題材強度',d.news.theme)}</div>
+   <div class="mini-grid"><div><span>24H</span><b>${d.news.n24}</b></div><div><span>3日</span><b>${d.news.n3}</b></div><div><span>7日</span><b>${d.news.n7}</b></div><div><span>利多反映</span><b>${d.news.reflected}</b></div></div>
+   <div class="rc-news">📌 ${d.news.title}</div>
+   <div class="rc-kw">${d.news.posKw.map(x=>`<span class="kw pos">利多·${x}</span>`).join('')}${d.news.negKw.map(x=>`<span class="kw neg">利空·${x}</span>`).join('')}</div>
+   <p class="ai-read">🧠 ${d.news.read}</p>
+
+   <h4 class="ana-h">💬 社群討論溫度</h4>
+   <div class="mini-grid"><div><span>PTT</span><b>${d.social.ptt}</b></div><div><span>Dcard</span><b>${d.social.dcard}</b></div><div><span>YouTube</span><b>${d.social.yt}</b></div><div><span>熱度變化</span><b class="${cls(d.social.change)}">${d.social.change>=0?'+':''}${d.social.change}%</b></div></div>
+   <div class="senti-bar"><i class="pos" style="width:${d.social.pos}%"></i><i class="neu" style="width:${d.social.neu}%"></i><i class="neg" style="width:${d.social.neg}%"></i></div>
+   <div class="senti-leg"><span class="pos">多 ${d.social.pos}%</span><span class="muted">中 ${d.social.neu}%</span><span class="neg">空 ${d.social.neg}%</span></div>
+   <div class="ana-scores">${sb('討論熱度',d.social.heat)}${sb('散戶過熱',d.social.retailFomo,true)}</div>
+   <div class="rc-kw">${d.social.bullKw.map(x=>`<span class="kw soc">多·${x}</span>`).join('')}${d.social.bearKw.map(x=>`<span class="kw neg">空·${x}</span>`).join('')}</div>
+   <p class="ai-read">🧠 ${d.social.read}</p>
+
+   <h4 class="ana-h">🎯 操作參考</h4>
+   <div class="rc-grid"><div><span>建議觀察價</span><b>${d.watch}</b></div><div><span>停損價</span><b>${d.stop}</b></div><div><span>第一壓力</span><b>${d.r1}</b></div><div><span>第二壓力</span><b>${d.r2}</b></div></div>
+   <ul class="scen-list">
+     <li class="up">🟢 樂觀：${d.scen.up}</li>
+     <li class="mid">🟡 中性：${d.scen.mid}</li>
+     <li class="risk">🔴 風險：${d.scen.risk}</li>
+   </ul>
+   <div class="rc-tip">🧭 ${a.tip}</div>
+
+   <div class="modal-foot">
+     ${inPool?'':`<button class="btn" onclick="addByCode('${s.code}')">加入自選</button>`}
+     <button class="btn" onclick="addHoldFromCode('${s.code}')">加入持股</button>
+     <button class="btn primary" onclick="closeModal()">關閉</button>
+   </div>`);
+}
+function addHoldFromCode(code){
+  const s=stocks.find(x=>x.code===code); if(!s){toast('請先加入自選');return;}
+  const d=generateAIStockAdvice(s);
+  closeModal();
+  holdForm({code:s.code,name:s.name,buy:d.watch,price:s.price,stop:d.stop,target:d.tech.t1,ma20:s.ma20,rsi:s.rsi,k:s.k,foreign:s.foreign});
+}
+
+/* ---- AI 股票掃描器 ---- */
+function renderScanner(){
+  const indSel=$('#scanInd'); if(!indSel)return;
+  // 產業選單（保留選取）
+  const cur=indSel.value;
+  const inds=[...new Set(stocks.map(s=>s.industry).filter(Boolean))].sort();
+  indSel.innerHTML='<option value="">全部產業</option>'+inds.map(i=>`<option ${i===cur?'selected':''}>${i}</option>`).join('');
+  const fInd=indSel.value, fType=$('#scanType').value, fRisk=$('#scanRisk').value;
+  let rows=advList().slice();
+  if(fInd)rows=rows.filter(r=>r.s.industry===fInd);
+  if(fType)rows=rows.filter(r=>r.d.tech.type===fType);
+  if(fRisk)rows=rows.filter(r=> fRisk==='high'?r.d.fomo>=60: fRisk==='mid'?(r.d.fomo>=40&&r.d.fomo<60): r.d.fomo<40);
+  rows.sort((a,b)=>b.d.momentum-a.d.momentum);
+  setText('#scanCount',rows.length+' 檔');
+  const tb=$('#scanBody');
+  tb.innerHTML=rows.length?rows.map(r=>{
+    const a=r.d.tech,col=a.meta.c||'gray';
+    return `<tr>
+      <td>${r.s.code}</td><td class="l">${r.s.name||''}</td><td>${r.s.industry||'-'}</td>
+      <td>${fmt(r.s.price)}</td><td class="${cls(n(r.s.chg))}">${n(r.s.chg)?pct(r.s.chg):'-'}</td>
+      <td><b>${r.d.momentum}</b></td><td>${a.entry}</td><td class="${a.escape>=60?'neg':''}">${a.escape}</td>
+      <td class="${r.d.fomo>=60?'neg':''}">${r.d.fomo}</td><td>${d_socialHeat(r)}</td>
+      <td><span class="rc-type ${col}">${a.type||'觀察'}</span></td><td>${a.action}</td>
+      <td><button class="link" onclick="showAnalysis('${r.s.id}')">分析</button> · <button class="link" onclick="addHoldFromCode('${r.s.code}')">持股</button></td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="13" class="muted">無符合條件的股票</td></tr>';
+}
+function d_socialHeat(r){return r.d.social.heat;}
+
+/* ---- AI 情緒雷達 ---- */
+function renderRadar(){
+  const box=$('#radarZone'); if(!box)return;
+  const adv=advList().slice().sort((a,b)=>b.d.news.heat+b.d.social.heat-(a.d.news.heat+a.d.social.heat));
+  box.innerHTML=adv.length?adv.map(({s,d})=>`
+    <div class="radar-card" onclick="showAnalysis('${s.id}')">
+      <div class="rc-top"><div><div class="rc-name">${s.code} ${s.name||''}</div><div class="muted">${s.industry||''} · ${fmt(s.price)} <span class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):''}</span></div></div>
+        <div class="rc-scores"><div class="rc-sc"><b>${d.news.sentiment}</b><span>新聞</span></div><div class="rc-sc"><b>${d.social.heat}</b><span>討論</span></div><div class="rc-sc"><b class="${d.fomo>=60?'neg':''}">${d.fomo}</b><span>追高險</span></div></div></div>
+      <div class="senti-bar sm"><i class="pos" style="width:${d.news.pos}%"></i><i class="neu" style="width:${d.news.neu}%"></i><i class="neg" style="width:${d.news.neg}%"></i></div>
+      <div class="rc-mini"><span>24H新聞 ${d.news.n24}</span><span>7日 ${d.news.n7}</span><span>PTT ${d.social.ptt}</span><span>變化 ${d.social.change>=0?'+':''}${d.social.change}%</span></div>
+      <div class="rc-kw">${d.news.posKw.map(x=>`<span class="kw pos">${x}</span>`).join('')}${d.social.bullKw.map(x=>`<span class="kw soc">${x}</span>`).join('')}</div>
+      <div class="rc-tip">🧠 ${d.news.read}</div>
+    </div>`).join(''):'<p class="muted">尚無資料。</p>';
+}
+
+/* ===================================================================
    投組 / 統計計算
    =================================================================== */
 function holdMetrics(){
@@ -239,7 +637,7 @@ function tradeStats(){
 /* ===================================================================
    渲染
    =================================================================== */
-function renderAll(){renderDashboard();renderWar();renderScreener();renderEntrySel();renderExitSel();renderHoldings();renderTrades();renderStats();renderCoach();$('#poolCountBadge').textContent=stocks.length+' 檔追蹤';}
+function renderAll(){renderDashboard();renderWar();renderScreener();renderScanner();renderRadar();renderEntrySel();renderExitSel();renderHoldings();renderTrades();renderStats();renderCoach();$('#poolCountBadge').textContent=stocks.length+' 檔追蹤';}
 
 /* ---- 今日作戰室 ---- */
 function holdToStock(h){return {code:h.code,name:h.name,price:h.price,ma5:h.ma5,ma10:h.ma10,ma20:h.ma20,ma60:h.ma60,rsi:h.rsi,k:h.k,d:h.d,macd:h.macd,volume:h.volume,vol5:h.vol5,foreign:h.foreign,trust:h.trust,margin:h.margin,support:h.support,prevHigh:h.prevHigh,prevLow:h.prevLow,platform:h.platform};}
@@ -367,6 +765,7 @@ function renderDashboard(){
       <td><span class="pill ${lc}">${r.fr}</span></td><td>${r.bi}</td><td>${r.ti}</td><td>${stTag}</td></tr>`;
   });
   if(!stocks.length) tb.innerHTML='<tr><td colspan="7" class="muted">尚無資料，請至選股中心新增股票</td></tr>';
+  renderAIHome();
   drawCharts();
 }
 function gauge(gSel,nSel,v){
@@ -401,7 +800,7 @@ function renderScreener(filter=''){
     const fr=fiveRules(s).score,[lc,lt]=lightOf(fr),bi=bottomIndex(s).score,ti=topIndex(s).score,pe=persona(s);
     tb.innerHTML+=`<tr>
       <td>${s.code}</td><td class="l">${s.name||'-'}</td><td>${s.industry||'-'}</td>
-      <td>${fmt(s.price)}</td><td>${fmt(s.volume)}</td><td>${fmt(s.ma5)}</td><td>${fmt(s.ma20)}</td>
+      <td>${fmt(s.price)}</td><td class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):'-'}</td><td>${fmt(s.volume)}</td><td>${fmt(s.ma5)}</td><td>${fmt(s.ma20)}</td>
       <td>${fmt(s.rsi)}</td><td>${fmt(s.k)}/${fmt(s.d)}</td><td class="${cls(n(s.foreign))}">${fmt(s.foreign)}</td>
       <td><span class="persona">${pe.emoji}${pe.type}</span></td>
       <td><span class="pill ${lc}">${fr} ${lt}</span></td><td>${bi}</td><td>${ti}</td>
@@ -631,22 +1030,22 @@ function stockForm(s){
   <div class="form-grid">
     <div><label>股票代號* <small class="muted">(輸入自動帶名稱)</small></label><input id="f_code" type="text" value="${s.code||''}" oninput="codeAutofill()" list="codeList" autocomplete="off"></div>${field('股票名稱','f_name',s.name,'text')}
     ${field('產業類別','f_industry',s.industry,'text')}${field('目前價格','f_price',s.price)}
-    ${field('成交量(張)','f_volume',s.volume)}${field('5日均量(張)','f_vol5',s.vol5)}
-    ${field('5日均線','f_ma5',s.ma5)}${field('10日均線','f_ma10',s.ma10)}
-    ${field('20日均線','f_ma20',s.ma20)}${field('60日均線','f_ma60',s.ma60)}
-    ${field('RSI','f_rsi',s.rsi)}${field('MACD','f_macd',s.macd)}
-    ${field('K 值','f_k',s.k)}${field('D 值','f_d',s.d)}
-    ${field('外資買賣超(張)','f_foreign',s.foreign)}${field('投信買賣超(張)','f_trust',s.trust)}
-    ${field('融資增減(張)','f_margin',s.margin)}${field('前波支撐價','f_support',s.support)}
-    ${field('波段前高','f_prevHigh',s.prevHigh)}${field('波段前低','f_prevLow',s.prevLow)}
-    ${field('平台突破高度','f_platform',s.platform,'number',true)}
+    ${field('漲跌幅 %','f_chg',s.chg)}${field('成交量(張)','f_volume',s.volume)}
+    ${field('5日均量(張)','f_vol5',s.vol5)}${field('5日均線','f_ma5',s.ma5)}
+    ${field('10日均線','f_ma10',s.ma10)}${field('20日均線','f_ma20',s.ma20)}
+    ${field('60日均線','f_ma60',s.ma60)}${field('RSI','f_rsi',s.rsi)}
+    ${field('MACD','f_macd',s.macd)}${field('K 值','f_k',s.k)}
+    ${field('D 值','f_d',s.d)}${field('外資買賣超(張)','f_foreign',s.foreign)}
+    ${field('投信買賣超(張)','f_trust',s.trust)}${field('融資增減(張)','f_margin',s.margin)}
+    ${field('前波支撐價','f_support',s.support)}${field('波段前高','f_prevHigh',s.prevHigh)}
+    ${field('波段前低','f_prevLow',s.prevLow)}${field('平台突破高度','f_platform',s.platform,'number',true)}
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="saveStock('${s.id||''}')">儲存</button></div>`);
 }
 function saveStock(id){
   const g=k=>$('#f_'+k).value;
   if(!g('code')){toast('請輸入股票代號');return;}
-  const o={id:id||uid(),code:g('code'),name:g('name'),industry:g('industry'),price:g('price'),volume:g('volume'),vol5:g('vol5'),
+  const o={id:id||uid(),code:g('code'),name:g('name'),industry:g('industry'),price:g('price'),chg:g('chg'),volume:g('volume'),vol5:g('vol5'),
     ma5:g('ma5'),ma10:g('ma10'),ma20:g('ma20'),ma60:g('ma60'),rsi:g('rsi'),macd:g('macd'),k:g('k'),d:g('d'),
     foreign:g('foreign'),trust:g('trust'),margin:g('margin'),support:g('support'),prevHigh:g('prevHigh'),prevLow:g('prevLow'),platform:g('platform')};
   if(id){const i=stocks.findIndex(x=>x.id===id);stocks[i]=o;}else stocks.push(o);
@@ -667,7 +1066,7 @@ function codeAutofill(){
 function addByCode(code){const d=(window.TW_STOCKS&&TW_STOCKS[code])||{};stockForm({code,name:d.n||'',industry:d.i||''});}
 
 /* 載入每日自動更新資料 data.json（由 GitHub Actions 產生） */
-const AUTO_FIELDS=['price','volume','vol5','ma5','ma10','ma20','ma60','rsi','k','d','macd','foreign','trust'];
+const AUTO_FIELDS=['price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','k','d','macd','foreign','trust'];
 async function loadDailyData(silent){
   try{
     const res=await fetch('data.json?t='+Date.now());
@@ -706,8 +1105,8 @@ function updateStockSuggest(q){
 }
 
 /* 批量貼上匯入 */
-const BULK_COLS=['code','name','industry','price','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform'];
-const BULK_HEAD='代號,名稱,產業,價格,成交量,5日均量,5MA,10MA,20MA,60MA,RSI,MACD,K,D,外資,投信,融資,前波支撐,前高,前低,平台高度';
+const BULK_COLS=['code','name','industry','price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform'];
+const BULK_HEAD='代號,名稱,產業,價格,漲跌幅,成交量,5日均量,5MA,10MA,20MA,60MA,RSI,MACD,K,D,外資,投信,融資,前波支撐,前高,前低,平台高度';
 function bulkStockForm(){
   openModal(`<h3>⇪ 批量匯入股票</h3>
   <p class="muted">每行一檔，欄位用 <b>逗號</b> 或 <b>Tab</b>（可直接從 Excel／Google 試算表整列複製貼上）分隔。<b>只有「代號」必填</b>，其餘可留空；同代號會自動更新。</p>
@@ -821,6 +1220,8 @@ function switchTab(tab){
   $$('.tab').forEach(t=>t.classList.toggle('active',t.id===tab));
   if(tab==='dashboard'||tab==='stats')drawCharts();
   if(tab==='war')renderWar();
+  if(tab==='scanner')renderScanner();
+  if(tab==='radar')renderRadar();
   if(tab==='coach')renderCoach();
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -828,6 +1229,8 @@ $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b
 
 $('#editMarketBtn').onclick=()=>marketForm();
 $('#loadDataBtn').onclick=()=>loadDailyData(false);
+['#scanInd','#scanType','#scanRisk'].forEach(id=>{const e=$(id);if(e)e.onchange=renderScanner;});
+{const sb=$('#scanBtn');if(sb)sb.onclick=()=>{renderScanner();toast('已重新掃描');};}
 $('#importStockBtn').onclick=()=>bulkStockForm();
 $('#addStockBtn').onclick=()=>stockForm();
 $('#addHoldBtn').onclick=()=>holdForm();
@@ -859,11 +1262,26 @@ function seed(){
   if(stocks.length||localStorage.getItem('fj_seeded'))return;
   localStorage.setItem('fj_seeded','1');
   stocks=[
-    {id:uid(),code:'2330',name:'台積電',industry:'半導體',price:1050,volume:32000,vol5:25000,ma5:1010,ma10:990,ma20:960,ma60:900,rsi:64,macd:8,k:72,d:60,foreign:8500,trust:1200,margin:-300,support:980,prevHigh:1080,prevLow:850,platform:40},
-    {id:uid(),code:'2454',name:'聯發科',industry:'IC設計',price:1380,volume:9800,vol5:9000,ma5:1360,ma10:1350,ma20:1320,ma60:1280,rsi:58,macd:5,k:55,d:50,foreign:1200,trust:300,margin:200,support:1300,prevHigh:1450,prevLow:1180,platform:50},
-    {id:uid(),code:'2603',name:'長榮',industry:'航運',price:205,volume:88000,vol5:42000,ma5:198,ma10:190,ma20:185,ma60:178,rsi:81,macd:3,k:88,d:80,foreign:-5200,trust:-800,margin:6500,support:188,prevHigh:215,prevLow:150,platform:20},
-    {id:uid(),code:'2882',name:'國泰金',industry:'金融',price:62,volume:21000,vol5:20000,ma5:61.5,ma10:61,ma20:60.8,ma60:60,rsi:52,macd:0.2,k:50,d:48,foreign:300,trust:100,margin:-50,support:60,prevHigh:66,prevLow:55,platform:3},
-    {id:uid(),code:'3034',name:'聯詠',industry:'IC設計',price:480,volume:6200,vol5:9000,ma5:495,ma10:505,ma20:520,ma60:540,rsi:32,macd:-4,k:22,d:30,foreign:-1500,trust:200,margin:-1200,support:470,prevHigh:600,prevLow:455,platform:15},
+    {id:uid(),code:'2330',name:'台積電',industry:'半導體',price:1050,chg:1.5,volume:32000,vol5:25000,ma5:1010,ma10:990,ma20:960,ma60:900,rsi:64,macd:8,k:72,d:65,foreign:8500,trust:1200,margin:-300,support:980,prevHigh:1080,prevLow:850,platform:40},
+    {id:uid(),code:'2317',name:'鴻海',industry:'其他電子',price:200,chg:0.4,volume:25000,vol5:24000,ma5:199,ma10:198,ma20:197,ma60:192,rsi:54,macd:1,k:52,d:50,foreign:500,trust:100,margin:-50,support:195,prevHigh:215,prevLow:175,platform:10},
+    {id:uid(),code:'2454',name:'聯發科',industry:'半導體',price:1380,chg:1.2,volume:11000,vol5:9000,ma5:1360,ma10:1350,ma20:1320,ma60:1280,rsi:60,macd:6,k:58,d:52,foreign:1800,trust:400,margin:-100,support:1300,prevHigh:1450,prevLow:1180,platform:50},
+    {id:uid(),code:'2308',name:'台達電',industry:'電子零組件',price:420,chg:1.8,volume:18000,vol5:14000,ma5:410,ma10:405,ma20:395,ma60:370,rsi:63,macd:5,k:66,d:58,foreign:3000,trust:600,margin:-50,support:398,prevHigh:432,prevLow:330,platform:18},
+    {id:uid(),code:'2382',name:'廣達',industry:'電腦及週邊',price:295,chg:3.2,volume:30000,vol5:18000,ma5:285,ma10:280,ma20:272,ma60:255,rsi:68,macd:6,k:72,d:60,foreign:4000,trust:500,margin:200,support:273,prevHigh:298,prevLow:210,platform:12},
+    {id:uid(),code:'3231',name:'緯創',industry:'電腦及週邊',price:125,chg:3.5,volume:60000,vol5:35000,ma5:118,ma10:115,ma20:110,ma60:100,rsi:69,macd:4,k:74,d:62,foreign:6000,trust:800,margin:500,support:112,prevHigh:126,prevLow:85,platform:8},
+    {id:uid(),code:'2356',name:'英業達',industry:'電腦及週邊',price:62,chg:2.8,volume:40000,vol5:25000,ma5:59,ma10:58,ma20:56,ma60:52,rsi:67,macd:2,k:71,d:60,foreign:2000,trust:300,margin:150,support:57,prevHigh:63,prevLow:42,platform:5},
+    {id:uid(),code:'3661',name:'世芯-KY',industry:'半導體',price:3500,chg:4.5,volume:5000,vol5:3000,ma5:3300,ma10:3250,ma20:3100,ma60:2700,rsi:78,macd:50,k:84,d:72,foreign:600,trust:100,margin:300,support:3150,prevHigh:3550,prevLow:2200,platform:80},
+    {id:uid(),code:'3017',name:'奇鋐',industry:'電子零組件',price:720,chg:2.5,volume:9000,vol5:6500,ma5:700,ma10:690,ma20:660,ma60:600,rsi:66,macd:9,k:70,d:60,foreign:1500,trust:300,margin:100,support:665,prevHigh:745,prevLow:520,platform:30},
+    {id:uid(),code:'3443',name:'創意',industry:'半導體',price:1500,chg:2.0,volume:4000,vol5:3000,ma5:1460,ma10:1440,ma20:1400,ma60:1300,rsi:65,macd:10,k:68,d:60,foreign:800,trust:200,margin:-20,support:1410,prevHigh:1560,prevLow:1150,platform:40},
+    {id:uid(),code:'2603',name:'長榮',industry:'航運',price:205,chg:-2.5,volume:88000,vol5:42000,ma5:210,ma10:208,ma20:200,ma60:185,rsi:82,macd:3,k:88,d:84,foreign:-5200,trust:-800,margin:6500,support:188,prevHigh:218,prevLow:150,platform:20},
+    {id:uid(),code:'2615',name:'萬海',industry:'航運',price:78,chg:-0.8,volume:20000,vol5:28000,ma5:80,ma10:84,ma20:90,ma60:98,rsi:36,macd:-3,k:25,d:30,foreign:-500,trust:-100,margin:-300,support:76,prevHigh:120,prevLow:74,platform:8},
+    {id:uid(),code:'2881',name:'富邦金',industry:'金融保險',price:92,chg:0.2,volume:15000,vol5:15000,ma5:91.5,ma10:91,ma20:90.5,ma60:88,rsi:53,macd:0.3,k:51,d:49,foreign:400,trust:200,margin:-30,support:90,prevHigh:98,prevLow:82,platform:4},
+    {id:uid(),code:'2882',name:'國泰金',industry:'金融保險',price:62,chg:-0.3,volume:14000,vol5:16000,ma5:62.5,ma10:62.8,ma20:63,ma60:61,rsi:47,macd:-0.2,k:44,d:48,foreign:-300,trust:-100,margin:100,support:60,prevHigh:68,prevLow:56,platform:3},
+    {id:uid(),code:'2891',name:'中信金',industry:'金融保險',price:38,chg:0.1,volume:30000,vol5:30000,ma5:37.8,ma10:37.5,ma20:37.2,ma60:36,rsi:55,macd:0.2,k:54,d:50,foreign:600,trust:150,margin:-40,support:37,prevHigh:41,prevLow:33,platform:2},
+    {id:uid(),code:'5871',name:'中租-KY',industry:'其他',price:145,chg:-1.0,volume:6000,vol5:7000,ma5:148,ma10:150,ma20:152,ma60:158,rsi:42,macd:-2,k:38,d:45,foreign:-700,trust:-200,margin:200,support:142,prevHigh:180,prevLow:138,platform:8},
+    {id:uid(),code:'1216',name:'統一',industry:'食品',price:82,chg:0.5,volume:9000,vol5:8000,ma5:81,ma10:80.5,ma20:79.5,ma60:76,rsi:58,macd:1,k:60,d:54,foreign:800,trust:300,margin:-20,support:79,prevHigh:86,prevLow:70,platform:5},
+    {id:uid(),code:'2912',name:'統一超',industry:'貿易百貨',price:280,chg:-0.4,volume:3000,vol5:3500,ma5:282,ma10:283,ma20:284,ma60:280,rsi:48,macd:-0.3,k:46,d:50,foreign:-100,trust:50,margin:-10,support:276,prevHigh:300,prevLow:260,platform:6},
+    {id:uid(),code:'8046',name:'南電',industry:'電子零組件',price:130,chg:0.3,volume:8000,vol5:11000,ma5:134,ma10:140,ma20:150,ma60:165,rsi:30,macd:-6,k:18,d:25,foreign:300,trust:100,margin:-700,support:128,prevHigh:210,prevLow:125,platform:12},
+    {id:uid(),code:'3037',name:'欣興',industry:'電子零組件',price:165,chg:-0.5,volume:12000,vol5:16000,ma5:170,ma10:178,ma20:188,ma60:200,rsi:33,macd:-5,k:22,d:28,foreign:-800,trust:200,margin:-500,support:162,prevHigh:240,prevLow:158,platform:15},
   ];
   cfg.market={twPrice:23000,twMa20:22500,twMa60:21800,otcPrice:255,otcMa20:250,otcMa60:240};
   save();
