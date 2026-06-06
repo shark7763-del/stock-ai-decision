@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a0e17">
+<title>台股 AI 買賣決策系統</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+</head>
+<body>
+
+<!-- ===== 頂部列 ===== -->
+<header class="topbar glass">
+  <div class="brand">
+    <span class="logo">股</span>
+    <div class="brand-txt">
+      <h1>台股 AI 買賣決策系統</h1>
+      <small id="todayDate">—</small>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <span class="badge" id="poolCountBadge">0 檔追蹤</span>
+    <button class="icon-btn" id="exportBtn" title="匯出資料">⬇</button>
+    <button class="icon-btn" id="importBtn" title="匯入資料">⬆</button>
+    <input type="file" id="importFile" accept="application/json" hidden>
+  </div>
+</header>
+
+<!-- ===== 導覽 ===== -->
+<nav class="nav glass" id="nav">
+  <button class="nav-btn active" data-tab="dashboard">🏠 儀表板</button>
+  <button class="nav-btn" data-tab="screener">🔍 選股中心</button>
+  <button class="nav-btn" data-tab="entry">🟢 進場引擎</button>
+  <button class="nav-btn" data-tab="exit">🔴 出場引擎</button>
+  <button class="nav-btn" data-tab="risk">🛡 停損資金</button>
+  <button class="nav-btn" data-tab="holdings">💼 持股管理</button>
+  <button class="nav-btn" data-tab="journal">📒 交易紀錄</button>
+  <button class="nav-btn" data-tab="stats">📊 交易統計</button>
+  <button class="nav-btn" data-tab="coach">🤖 AI 教練</button>
+</nav>
+
+<main id="main">
+
+<!-- ============ 儀表板 ============ -->
+<section class="tab active" id="dashboard">
+  <div class="grid kpi-grid">
+    <div class="card glass kpi"><span class="kpi-label">市場溫度</span><span class="kpi-val" id="dbTemp">—</span><div class="bar"><i id="dbTempBar"></i></div></div>
+    <div class="card glass kpi"><span class="kpi-label">市場風險指數</span><span class="kpi-val warn" id="dbRisk">—</span><div class="bar"><i id="dbRiskBar" class="red"></i></div></div>
+    <div class="card glass kpi"><span class="kpi-label">總持股數</span><span class="kpi-val" id="dbHoldCount">—</span></div>
+    <div class="card glass kpi"><span class="kpi-label">總投入資金</span><span class="kpi-val" id="dbInvested">—</span></div>
+    <div class="card glass kpi"><span class="kpi-label">目前損益</span><span class="kpi-val" id="dbPnl">—</span></div>
+    <div class="card glass kpi"><span class="kpi-label">總報酬率</span><span class="kpi-val" id="dbRoi">—</span></div>
+    <div class="card glass kpi"><span class="kpi-label">歷史勝率</span><span class="kpi-val" id="dbWin">—</span></div>
+    <div class="card glass kpi"><span class="kpi-label">已實現淨利</span><span class="kpi-val" id="dbNet">—</span></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="card glass signal-card green"><div class="big" id="dbStrong">0</div><div>今日強勢股</div></div>
+    <div class="card glass signal-card yellow"><div class="big" id="dbObserve">0</div><div>今日觀察股</div></div>
+    <div class="card glass signal-card red"><div class="big" id="dbDanger">0</div><div>今日危險股</div></div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card glass gauge-card">
+      <h3>AI 市場評分</h3>
+      <div class="gauge" id="aiGauge"><div class="gauge-num" id="aiScore">0</div></div>
+      <div class="gauge-tag" id="aiTag">—</div>
+    </div>
+    <div class="card glass">
+      <h3>資產曲線</h3>
+      <canvas id="chartEquity" height="180"></canvas>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card glass"><h3>月獲利</h3><canvas id="chartMonthly" height="180"></canvas></div>
+    <div class="card glass"><h3>勝率分布</h3><canvas id="chartWin" height="180"></canvas></div>
+  </div>
+
+  <div class="card glass">
+    <h3>🎯 今日 AI 重點清單（依進場分數排序）</h3>
+    <div class="table-wrap"><table id="dbTopTable"><thead><tr><th>代號</th><th>名稱</th><th>人格</th><th>五鐵律</th><th>抄底</th><th>逃命</th><th>狀態</th></tr></thead><tbody></tbody></table></div>
+  </div>
+</section>
+
+<!-- ============ 選股中心 ============ -->
+<section class="tab" id="screener">
+  <div class="card glass">
+    <div class="card-head">
+      <h3>🔍 選股中心 / 自選股池</h3>
+      <button class="btn primary" id="addStockBtn">＋ 新增股票</button>
+    </div>
+    <input class="search" id="stockSearch" placeholder="搜尋代號 / 名稱 / 產業…">
+    <div class="table-wrap">
+      <table id="stockTable">
+        <thead><tr>
+          <th>代號</th><th>名稱</th><th>產業</th><th>價格</th><th>量</th>
+          <th>5MA</th><th>20MA</th><th>RSI</th><th>K/D</th><th>外資</th>
+          <th>人格</th><th>五鐵律</th><th>抄底</th><th>逃命</th><th>操作</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="empty" id="stockEmpty">尚無自選股，點「新增股票」開始建立你的股池。</p>
+  </div>
+</section>
+
+<!-- ============ 進場引擎 ============ -->
+<section class="tab" id="entry">
+  <div class="card glass">
+    <h3>🟢 進場引擎</h3>
+    <p class="muted">選擇股池內的股票，系統整合「五鐵律 + 低點抄底指數 + AI 目標價」給出進場判斷。</p>
+    <select class="select" id="entrySelect"></select>
+  </div>
+  <div id="entryResult"></div>
+</section>
+
+<!-- ============ 出場引擎 ============ -->
+<section class="tab" id="exit">
+  <div class="card glass">
+    <h3>🔴 出場引擎 / 高點預警</h3>
+    <p class="muted">計算逃命指數，提供減碼與停利建議。可選股池或持股。</p>
+    <select class="select" id="exitSelect"></select>
+  </div>
+  <div id="exitResult"></div>
+</section>
+
+<!-- ============ 停損資金 ============ -->
+<section class="tab" id="risk">
+  <div class="grid g2">
+    <div class="card glass">
+      <h3>🛡 停損 & 部位計算機</h3>
+      <label>買進價</label><input type="number" id="rkBuy" step="0.01" placeholder="例 100">
+      <label>停損 % <small class="muted">(預設 8%)</small></label><input type="number" id="rkStop" step="0.1" value="8">
+      <label>目標價 <small class="muted">(用於風險報酬比)</small></label><input type="number" id="rkTarget" step="0.01" placeholder="例 120">
+      <label>總資金</label><input type="number" id="rkCapital" step="1000" placeholder="例 1000000">
+      <label>單筆風險 % <small class="muted">(預設 2%)</small></label><input type="number" id="rkRisk" step="0.1" value="2">
+      <button class="btn primary full" id="rkCalc">計算</button>
+    </div>
+    <div class="card glass" id="rkOut"><h3>計算結果</h3><p class="muted">輸入左方參數後按計算。</p></div>
+  </div>
+  <div class="card glass">
+    <h3>💰 資金管理設定</h3>
+    <label>帳戶總資金</label><input type="number" id="accCapital" step="1000" placeholder="例 1000000">
+    <label>每筆最大風險 %</label><input type="number" id="accRisk" step="0.1" value="2">
+    <button class="btn full" id="saveCapital">儲存設定</button>
+    <p class="muted" id="capitalNote"></p>
+  </div>
+</section>
+
+<!-- ============ 持股管理 ============ -->
+<section class="tab" id="holdings">
+  <div class="card glass">
+    <div class="card-head"><h3>💼 持股管理</h3><button class="btn primary" id="addHoldBtn">＋ 新增持股</button></div>
+    <div class="table-wrap">
+      <table id="holdTable"><thead><tr>
+        <th>買進日</th><th>代號</th><th>名稱</th><th>買價</th><th>張</th><th>停損</th><th>目標</th><th>現價</th><th>損益</th><th>報酬率</th><th>操作</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <p class="empty" id="holdEmpty">尚無持股。</p>
+  </div>
+</section>
+
+<!-- ============ 交易紀錄 ============ -->
+<section class="tab" id="journal">
+  <div class="card glass">
+    <div class="card-head"><h3>📒 交易紀錄（已平倉）</h3><button class="btn primary" id="addTradeBtn">＋ 新增紀錄</button></div>
+    <div class="table-wrap">
+      <table id="tradeTable"><thead><tr>
+        <th>買進日</th><th>賣出日</th><th>股票</th><th>買價</th><th>賣價</th><th>張</th><th>損益</th><th>報酬率</th><th>進場原因</th><th>出場原因</th><th>操作</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <p class="empty" id="tradeEmpty">尚無交易紀錄。</p>
+  </div>
+</section>
+
+<!-- ============ 交易統計 ============ -->
+<section class="tab" id="stats">
+  <div class="grid kpi-grid" id="statGrid"></div>
+  <div class="card glass"><h3>盈虧結構</h3><canvas id="chartStats" height="200"></canvas></div>
+</section>
+
+<!-- ============ AI 教練 ============ -->
+<section class="tab" id="coach">
+  <div class="card glass gauge-card">
+    <h3>🤖 AI 交易教練 · 今日評分</h3>
+    <div class="gauge" id="coachGauge"><div class="gauge-num" id="coachScore">0</div></div>
+    <div class="gauge-tag" id="coachTag">—</div>
+  </div>
+  <div class="grid g3" id="coachCards"></div>
+  <div class="card glass">
+    <h3>📝 紀律自評（影響教練評分）</h3>
+    <div class="check-grid" id="coachChecks"></div>
+    <button class="btn primary full" id="coachSave">儲存今日自評</button>
+  </div>
+</section>
+
+</main>
+
+<!-- ===== Modal ===== -->
+<div class="modal-mask" id="modalMask"><div class="modal glass" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
