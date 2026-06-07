@@ -94,6 +94,11 @@ td.l,th.l{text-align:left}
 .light-70{background:rgba(255,206,77,.16);color:var(--yellow)}
 .light-60{background:rgba(255,159,67,.16);color:var(--orange)}
 .light-0{background:rgba(255,91,110,.16);color:var(--red)}
+.decision-light{display:inline-flex;align-items:center;gap:4px;margin-left:5px;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:900;border:1px solid transparent}
+.decision-light.green{background:rgba(22,211,154,.16);border-color:rgba(22,211,154,.42);color:var(--green)}
+.decision-light.yellow{background:rgba(255,206,77,.16);border-color:rgba(255,206,77,.42);color:var(--yellow)}
+.decision-light.red{background:rgba(255,91,110,.16);border-color:rgba(255,91,110,.42);color:var(--red)}
+.decision-light.black{background:rgba(0,0,0,.45);border-color:rgba(255,255,255,.25);color:#dfe7f7}
 .pos{color:var(--green)} .neg{color:var(--red)} .muted{color:var(--muted);font-size:13px}
 .persona{font-size:12px;padding:2px 8px;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
 

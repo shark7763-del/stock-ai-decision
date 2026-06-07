@@ -396,11 +396,56 @@ function calculateFomoRiskScore(s,tech,news,social){
 function calculateMomentumScore(tech,news,social,fomo){
   return clamp(tech.trend*0.25+tech.vol*0.20+tech.chips*0.20+news.sentiment*0.15+social.heat*0.10+news.theme*0.10-fomo*0.20);
 }
+function riskRewardOf(s,tech){
+  const price=n(s.price), stop=n(tech.stop), target=n(tech.t1);
+  const risk=price-stop, reward=target-price;
+  return risk>0?reward/risk:0;
+}
+function calculateDisciplineScore(s,tech,fomo){
+  const mk=marketInfo(), rr=riskRewardOf(s,tech);
+  let sc=100;
+  if(!n(tech.stop)||n(tech.stop)>=n(s.price))sc-=25;
+  if(rr<1.5)sc-=30; else if(rr<2)sc-=12;
+  if(fomo>=75)sc-=25; else if(fomo>=60)sc-=12;
+  if(tech.escape>=70)sc-=25; else if(tech.escape>=55)sc-=10;
+  if(mk.has&&mk.risk>70)sc-=30; else if(mk.has&&mk.risk>55)sc-=12;
+  if(forbidEntry(s).length)sc-=15;
+  return clamp(sc);
+}
+function calculateAIScoreBreakdown(s,tech,news,social,fomo){
+  const technical=clamp(tech.trend*0.35+tech.vol*0.20+tech.breakout*0.20+tech.rebound*0.15+(100-tech.escape)*0.10);
+  const chip=tech.chips;
+  const theme=news.theme;
+  const newsScore=news.sentiment;
+  const socialScore=clamp(social.heat*0.65+(100-social.retailFomo)*0.20+social.pos*0.15);
+  const risk=clamp(tech.risk*0.45+fomo*0.35+tech.escape*0.20);
+  const discipline=calculateDisciplineScore(s,tech,fomo);
+  const total=clamp(technical*0.25+chip*0.20+theme*0.12+newsScore*0.10+socialScore*0.08+discipline*0.10-risk*0.25);
+  return {technical,chip,theme,news:newsScore,social:socialScore,risk,discipline,total,rr:+riskRewardOf(s,tech).toFixed(2)};
+}
+function decisionLight(s,score,tech){
+  const mk=marketInfo(), forb=forbidEntry(s);
+  const hardStop=tech.escape>=80||(n(s.price)>0&&n(tech.stop)>0&&n(s.price)<=n(tech.stop));
+  if(hardStop) return {key:'black',label:'黑燈',action:'停損或減碼',cls:'black',reason:'已觸發出場或停損條件，先處理風險'};
+  if(forb.length||score.risk>=70||score.rr<1.5||(mk.has&&mk.risk>70)) return {key:'red',label:'紅燈',action:'禁止進場',cls:'red',reason:forb[0]||'風險分過高或風險報酬比不足'};
+  if(score.total>=75&&score.technical>=70&&score.risk<=45&&score.rr>=2&&score.discipline>=70) return {key:'green',label:'綠燈',action:'可制定進場計畫',cls:'green',reason:'技術、風控與紀律條件同步成立'};
+  return {key:'yellow',label:'黃燈',action:'觀察等待',cls:'yellow',reason:'條件尚未完全同步，等待回測、量價或籌碼確認'};
+}
+function aiPlainAdvice(s,d){
+  const sc=d.score, light=d.light, a=d.tech;
+  const base=`${s.code} ${s.name||''} 目前是${light.label}：${light.action}。`;
+  if(light.key==='green')return `${base} 技術分 ${sc.technical}、籌碼分 ${sc.chip}，風險分 ${sc.risk}；可等價格接近 ${d.watch} 且量價不轉弱時建立計畫，停損 ${d.stop}，第一目標 ${d.r1}，風險報酬比 ${sc.rr}。`;
+  if(light.key==='yellow')return `${base} AI 總分 ${sc.total}，但仍需確認 ${a.trend<70?'均線趨勢':sc.chip<60?'法人籌碼':sc.risk>45?'追高風險':'量價表態'}；先列入觀察，不急著追價。`;
+  if(light.key==='red')return `${base} 主要原因是${light.reason}；即使題材或討論很熱，也不開新倉，等風險下降再重新評分。`;
+  return `${base} 逃命分 ${a.escape}、風險分 ${sc.risk} 偏高；若已有持股，優先檢查停損與減碼，不要凹單。`;
+}
 /* ---- 統合：每檔股票完整 AI 解讀 ---- */
 function generateAIStockAdvice(s){
   const tech=analyze(s), news=analyzeNewsSentiment(s), social=analyzeSocialSentiment(s);
   const fomo=calculateFomoRiskScore(s,tech,news,social);
   const momentum=calculateMomentumScore(tech,news,social,fomo);
+  const score=calculateAIScoreBreakdown(s,tech,news,social,fomo);
+  const light=decisionLight(s,score,tech);
   const price=n(s.price);
   const r1=Math.max(tech.t1, n(s.prevHigh)||tech.t1), r2=tech.t2;
   const tags=[];
@@ -425,11 +470,13 @@ function generateAIStockAdvice(s){
   else mAdvice='風險偏高或動能不足，先觀望';
   const judge=fomo>=70?'熱度高但追高風險升高':momentum>=75&&fomo<60?'短線動能偏強、市場關注度升高'
     :news.theme>=70?'題材正在發酵':momentum>=60?'偏多整理、需量價確認':'訊號尚未明確';
-  return {tech,news,social,fomo,momentum,tags,scen,mAdvice,judge,watch:tech.buyPoint,stop:tech.stop,r1:+r1.toFixed(2),r2:+r2.toFixed(2)};
+  const plain=aiPlainAdvice(s,{tech,score,light,watch:tech.buyPoint,stop:tech.stop,r1:+r1.toFixed(2),r2:+r2.toFixed(2)});
+  return {tech,news,social,fomo,momentum,score,light,plain,tags,scen,mAdvice,judge,watch:tech.buyPoint,stop:tech.stop,r1:+r1.toFixed(2),r2:+r2.toFixed(2)};
 }
 let _advCache=null,_advKey='';
 function advList(){
-  const key=stocks.map(s=>s.code+s.price+s.chg).join('|');
+  const mk=marketInfo();
+  const key=stocks.map(s=>[s.code,s.price,s.chg,s.volume,s.vol5,s.ma5,s.ma20,s.ma60,s.rsi,s.k,s.d,s.foreign,s.trust,s.margin,s.prevHigh].join(':')).join('|')+`|m:${mk.trend}:${mk.risk}`;
   if(_advKey!==key){_advCache=stocks.map(s=>({s,d:generateAIStockAdvice(s)}));_advKey=key;}
   return _advCache;
 }
@@ -481,16 +528,17 @@ function recCard(s,d){
   return `<div class="reco-card ${col}" onclick="showAnalysis('${s.id}')">
     <div class="rc-top">
       <div><span class="rc-type ${col}">${a.meta.e} ${a.type||'觀察'}</span>
+        <span class="decision-light ${d.light.cls}">${d.light.label}</span>
         <div class="rc-name">${s.code} ${s.name||''}</div>
         <div class="muted">${s.industry||''} · ${fmt(s.price)} <span class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):''}</span></div></div>
-      <div class="rc-scores"><div class="rc-sc"><b>${d.momentum}</b><span>潛力</span></div><div class="rc-sc"><b class="${d.fomo>=60?'neg':''}">${d.fomo}</b><span>追高險</span></div></div>
+      <div class="rc-scores"><div class="rc-sc"><b>${d.score.total}</b><span>AI</span></div><div class="rc-sc"><b class="${d.score.risk>=60?'neg':''}">${d.score.risk}</b><span>風險</span></div></div>
     </div>
-    <div class="rc-mini"><span>進場 ${a.entry}</span><span>逃命 ${a.escape}</span><span>情緒 ${d.news.sentiment}</span><span>熱度 ${d.social.heat}</span><span>題材 ${d.news.theme}</span></div>
-    <div class="rc-action ${a.entry>=75&&d.fomo<60?'go':d.fomo>=60?'stop':'watch'}">${a.action} · 部位 ${a.posPct}%</div>
+    <div class="rc-mini"><span>技術 ${d.score.technical}</span><span>籌碼 ${d.score.chip}</span><span>題材 ${d.score.theme}</span><span>紀律 ${d.score.discipline}</span><span>RR ${d.score.rr}</span></div>
+    <div class="rc-action ${d.light.key==='green'?'go':d.light.key==='black'||d.light.key==='red'?'stop':'watch'}">${d.light.action} · 部位 ${a.posPct}%</div>
     <div class="rc-grid"><div><span>觀察價</span><b>${d.watch}</b></div><div><span>停損</span><b>${d.stop}</b></div><div><span>壓力1</span><b>${d.r1}</b></div><div><span>壓力2</span><b>${d.r2}</b></div></div>
     <div class="rc-news">📰 ${d.news.title}</div>
     <div class="rc-kw">${d.news.posKw.map(x=>`<span class="kw pos">${x}</span>`).join('')}${d.social.bullKw.map(x=>`<span class="kw soc">${x}</span>`).join('')}</div>
-    <div class="rc-tip">🧭 ${a.tip}</div>
+    <div class="rc-tip">🧭 ${d.plain}</div>
   </div>`;
 }
 function renderEvents(adv){
@@ -511,15 +559,19 @@ function showAnalysis(id){
   const sb=(lbl,v,red)=>`<div class="ana-row"><span>${lbl}</span><div class="ana-bar"><i class="${red?'r':''}" style="width:${clamp(v)}%"></i></div><b>${clamp(v)}</b></div>`;
   const inPool=!!stocks.find(x=>x.code===s.code);
   openModal(`<h3>🔬 完整分析 · ${s.code} ${s.name||''}</h3>
-   <div class="ana-head"><span class="rc-type ${col}">${a.meta.e} ${a.type||'未分類'}</span> <span class="persona">${pe.emoji}${pe.type}</span>
+   <div class="ana-head"><span class="rc-type ${col}">${a.meta.e} ${a.type||'未分類'}</span> <span class="decision-light ${d.light.cls}">${d.light.label}</span> <span class="persona">${pe.emoji}${pe.type}</span>
      <span class="muted">${s.industry||''} · ${fmt(s.price)} <span class="${cls(n(s.chg))}">${n(s.chg)?pct(s.chg):''}</span></span></div>
 
    <div class="ana-big3">
-     <div class="b3"><span>AI 漲幅潛力</span><b>${d.momentum}</b></div>
-     <div class="b3"><span>AI 進場分</span><b>${a.entry}</b></div>
-     <div class="b3"><span>追高風險</span><b class="${d.fomo>=60?'neg':''}">${d.fomo}</b></div>
+     <div class="b3"><span>AI 總分</span><b>${d.score.total}</b></div>
+     <div class="b3"><span>風險分</span><b class="${d.score.risk>=60?'neg':''}">${d.score.risk}</b></div>
+     <div class="b3"><span>風險報酬比</span><b>${d.score.rr}</b></div>
    </div>
-   <div class="rc-action ${a.entry>=75&&d.fomo<60?'go':d.fomo>=60?'stop':'watch'}">${a.action}　|　${d.mAdvice}　·　建議部位 ${a.posPct}%</div>
+   <div class="rc-action ${d.light.key==='green'?'go':d.light.key==='black'||d.light.key==='red'?'stop':'watch'}">${d.light.action}　|　${d.light.reason}　·　建議部位 ${a.posPct}%</div>
+   <p class="ai-read">🧭 ${d.plain}</p>
+
+   <h4 class="ana-h">🧩 七大 AI 分數</h4>
+   <div class="ana-scores">${sb('技術分',d.score.technical)}${sb('籌碼分',d.score.chip)}${sb('題材分',d.score.theme)}${sb('新聞情緒',d.score.news)}${sb('社群討論',d.score.social)}${sb('風險分',d.score.risk,true)}${sb('紀律分',d.score.discipline)}</div>
 
    <h4 class="ana-h">📊 技術面</h4>
    <div class="ana-scores">${sb('趨勢',a.trend)}${sb('量能',a.vol)}${sb('籌碼',a.chips)}${sb('低點反彈',a.rebound)}${sb('突破',a.breakout)}${sb('追高風險',d.fomo,true)}${sb('AI逃命',a.escape,true)}</div>
@@ -548,7 +600,7 @@ function showAnalysis(id){
      <li class="mid">🟡 中性：${d.scen.mid}</li>
      <li class="risk">🔴 風險：${d.scen.risk}</li>
    </ul>
-   <div class="rc-tip">🧭 ${a.tip}</div>
+   <div class="rc-tip">交易教練提醒：${a.tip}</div>
 
    <div class="modal-foot">
      ${inPool?'':`<button class="btn" onclick="addByCode('${s.code}')">加入自選</button>`}
@@ -583,12 +635,12 @@ function renderScanner(){
     return `<tr>
       <td>${r.s.code}</td><td class="l">${r.s.name||''}</td><td>${r.s.industry||'-'}</td>
       <td>${fmt(r.s.price)}</td><td class="${cls(n(r.s.chg))}">${n(r.s.chg)?pct(r.s.chg):'-'}</td>
-      <td><b>${r.d.momentum}</b></td><td>${a.entry}</td><td class="${a.escape>=60?'neg':''}">${a.escape}</td>
-      <td class="${r.d.fomo>=60?'neg':''}">${r.d.fomo}</td><td>${d_socialHeat(r)}</td>
+      <td><b>${r.d.score.total}</b></td><td><span class="decision-light ${r.d.light.cls}">${r.d.light.label}</span></td>
+      <td>${r.d.score.technical}</td><td>${r.d.score.chip}</td><td class="${r.d.score.risk>=60?'neg':''}">${r.d.score.risk}</td><td>${r.d.score.discipline}</td>
       <td><span class="rc-type ${col}">${a.type||'觀察'}</span></td><td>${a.action}</td>
       <td><button class="link" onclick="showAnalysis('${r.s.id}')">分析</button> · <button class="link" onclick="addHoldFromCode('${r.s.code}')">持股</button></td>
     </tr>`;
-  }).join(''):'<tr><td colspan="13" class="muted">無符合條件的股票</td></tr>';
+  }).join(''):'<tr><td colspan="14" class="muted">無符合條件的股票</td></tr>';
 }
 function d_socialHeat(r){return r.d.social.heat;}
 
@@ -684,6 +736,7 @@ function showCard(id){
   if(!s){holdRef=holds.find(x=>x.id===id); if(holdRef){s=holdToStock(holdRef);isHold=true;}}
   if(!s)return;
   const fr=fiveRules(s).score,[lc]=lightOf(fr),bi=bottomIndex(s).score,top=topIndex(s).score,tp=targetPrices(s),pe=persona(s),ai=aiTotal(s);
+  const d=generateAIStockAdvice(s);
   const zone=entryZone(s), forb=forbidEntry(s);
   const stopPrice=(holdRef&&n(holdRef.stop)>0)?n(holdRef.stop):n(s.price)*0.92;
   let action,acls;
@@ -696,8 +749,9 @@ function showCard(id){
    <div class="stock-card">
      <div class="sc-head">
        <div><div class="sc-name">${s.code} ${s.name||''}</div><span class="persona">${pe.emoji}${pe.type}</span> <span class="muted">${pe.desc}</span></div>
-       <div class="sc-ai"><div class="sc-ai-num">${ai}</div><div class="k">AI 總分</div></div>
+       <div class="sc-ai"><div class="sc-ai-num">${d.score.total}</div><div class="k">AI 總分</div></div>
      </div>
+     <div style="margin:10px 0"><span class="decision-light ${d.light.cls}">${d.light.label}</span> <span class="muted">${d.light.action} · ${d.light.reason}</span></div>
      <div class="sc-grid">
        <div><span class="k">五鐵律</span><b class="pill ${lc}">${fr}</b></div>
        <div><span class="k">抄底指數</span><b>${bi}</b></div>
@@ -705,11 +759,16 @@ function showCard(id){
        <div><span class="k">停損價</span><b>${stopPrice.toFixed(2)}</b></div>
        <div><span class="k">目標價</span><b>${tp.t1.toFixed(2)}</b></div>
        <div><span class="k">人格</span><b>${pe.emoji}${pe.type}</b></div>
+       <div><span class="k">技術分</span><b>${d.score.technical}</b></div>
+       <div><span class="k">籌碼分</span><b>${d.score.chip}</b></div>
+       <div><span class="k">風險分</span><b>${d.score.risk}</b></div>
+       <div><span class="k">紀律分</span><b>${d.score.discipline}</b></div>
      </div>
      <div class="sc-action ${acls}">${action}</div>
      ${forb.length&&!isHold?`<div class="muted">禁止原因：${forb.join('、')}</div>`:''}
+     <div class="rc-tip">🧭 ${d.plain}</div>
    </div>
-   <div class="modal-foot"><button class="btn primary" onclick="closeModal()">關閉</button></div>`);
+   <div class="modal-foot"><button class="btn" onclick="showAnalysis('${id}')">完整分析</button><button class="btn primary" onclick="closeModal()">關閉</button></div>`);
 }
 
 /* ---- 大盤數據設定 ---- */
