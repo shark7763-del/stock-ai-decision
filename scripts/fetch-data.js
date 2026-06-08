@@ -121,11 +121,11 @@ async function fetchFundamentals() {
   await sleep(500);
   // 月營收（去年同月增減 %）
   const rev = await getJSON('https://openapi.twse.com.tw/v1/opendata/t187ap05_L');
-  if (Array.isArray(rev)) rev.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).revYoY = num(r['去年同月增減(%)'] || r['營收-去年同月增減(%)']); });
+  if (Array.isArray(rev)) rev.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).revYoY = num(r['營業收入-去年同月增減(%)']); });
   await sleep(500);
-  // EPS（綜合損益表 - 基本每股盈餘）
+  // EPS（基本每股盈餘，最新一季）
   const eps = await getJSON('https://openapi.twse.com.tw/v1/opendata/t187ap14_L');
-  if (Array.isArray(eps)) eps.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).eps = num(r.基本每股盈餘 || r.EPS); });
+  if (Array.isArray(eps)) eps.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).eps = num(r['基本每股盈餘(元)']); });
   return out;
 }
 
