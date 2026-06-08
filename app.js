@@ -15,6 +15,7 @@ let holds  = DB.get(DB.k.holds, []);
 let trades = DB.get(DB.k.trades, []);
 let cfg    = DB.get(DB.k.cfg, {capital:1000000, risk:2});
 let coach  = DB.get(DB.k.coach, {}); // {YYYY-MM-DD:{checks:{}}}
+let dataMeta = DB.get('fj_dataMeta', null); // {tradeDate, updated} 最近一次載入的資料日期
 const save = ()=>{DB.set(DB.k.stocks,stocks);DB.set(DB.k.holds,holds);DB.set(DB.k.trades,trades);DB.set(DB.k.cfg,cfg);DB.set(DB.k.coach,coach)};
 const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 
@@ -793,7 +794,7 @@ function saveMarket(){
 /* ---- 儀表板 ---- */
 let charts={};
 function renderDashboard(){
-  $('#todayDate').textContent = new Date().toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
+  updateDataDateLabel();
   const hm=holdMetrics(), ts=tradeStats();
   // 市場溫度 / 風險
   let temp=0,risk=0,strong=0,observe=0,danger=0;
@@ -1139,10 +1140,24 @@ async function loadDailyData(silent){
       else{ stocks.push({id:uid(),...d}); added++; }
     });
     if(data.market){ cfg.market={...getMarket(),...data.market}; }
+    dataMeta={tradeDate:data.tradeDate||'', updated:data.updated||''};
+    DB.set('fj_dataMeta', dataMeta);
     save();renderAll();
-    toast(`已載入 ${data.tradeDate||''} 數據：新增 ${added}、更新 ${updated}`);
+    if(!silent) toast(`已載入 ${data.tradeDate||''} 收盤數據：新增 ${added}、更新 ${updated}`);
   }catch(e){
     if(!silent) toast('尚無 data.json（需部署到 GitHub Pages 由 Actions 產生後才有資料）');
+  }
+}
+
+/* 在頂部列顯示資料日期，明確標示「收盤、非即時」避免誤會成盤中即時價 */
+function updateDataDateLabel(){
+  const el=$('#todayDate'); if(!el)return;
+  if(dataMeta&&dataMeta.tradeDate){
+    el.textContent=`📅 資料：${dataMeta.tradeDate} 收盤 · 非即時報價`;
+    el.classList.add('data-stale');
+  }else{
+    el.textContent='⚠ 目前為示範資料 · 請按「載入今日數據」';
+    el.classList.add('data-stale');
   }
 }
 /* 建立代號 datalist（表單自動完成） */
@@ -1351,3 +1366,5 @@ seed();
 buildCodeDatalist();
 $('#accCapital').value=cfg.capital; $('#accRisk').value=cfg.risk;
 renderAll();
+/* 開啟即自動載入最新收盤資料（silent），讓畫面顯示真實收盤價與資料日期，而非示範假資料 */
+loadDailyData(true);
