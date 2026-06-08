@@ -83,24 +83,50 @@ async function fetchStock(code) {
   if (!rows.length) return null;
   // 欄位: 日期,成交股數,成交金額,開,高,低,收,漲跌,成交筆數
   rows.sort((a, b) => roc2ad(a[0]).localeCompare(roc2ad(b[0])));
-  const closes = rows.map(r => num(r[6])).filter(v => v > 0);
+  const opens = rows.map(r => num(r[3]));
   const highs = rows.map(r => num(r[4]));
   const lows = rows.map(r => num(r[5]));
+  const closes = rows.map(r => num(r[6])).filter(v => v > 0);
   const vols = rows.map(r => Math.round(num(r[1]) / 1000)); // 股 → 張
   if (closes.length < 5) return null;
   const { k, d } = kd(highs, lows, closes);
   const lastC = closes[closes.length - 1], prevC = closes.length >= 2 ? closes[closes.length - 2] : lastC;
   const chg = prevC ? +(((lastC - prevC) / prevC) * 100).toFixed(2) : 0;
+  const last = rows.length - 1;
+  // 回測用歷史（最近 ~120 日 收盤＋張數）
+  const hN = Math.min(120, closes.length);
+  const history = [];
+  for (let i = closes.length - hN; i < closes.length; i++) history.push({ c: +closes[i].toFixed(2), v: vols[i] || 0 });
   return {
     code, chg,
     price: closes[closes.length - 1],
+    open: +num(rows[last][3]).toFixed(2), high: +num(rows[last][4]).toFixed(2), low: +num(rows[last][5]).toFixed(2),
     volume: vols[vols.length - 1],
     vol5: Math.round(ma(vols, 5)),
     ma5: +ma(closes, 5).toFixed(2), ma10: +ma(closes, 10).toFixed(2),
     ma20: +ma(closes, 20).toFixed(2), ma60: +ma(closes, 60).toFixed(2),
     rsi: rsi(closes), k, d, macd: macdDIF(closes),
+    history,
     _date: roc2ad(rows[rows.length - 1][0])
   };
+}
+
+/* ---- 基本面：本益比 / EPS / 月營收年增（TWSE OpenAPI，整批一次取） ---- */
+async function fetchFundamentals() {
+  const out = {}; // code -> {pe, eps, revYoY}
+  const ensure = c => (out[c] || (out[c] = {}));
+  // 本益比 / 殖利率 / 股價淨值比
+  const per = await getJSON('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL');
+  if (Array.isArray(per)) per.forEach(r => { const c = (r.Code || r.證券代號 || '').trim(); if (c) ensure(c).pe = num(r.PEratio || r.本益比); });
+  await sleep(500);
+  // 月營收（去年同月增減 %）
+  const rev = await getJSON('https://openapi.twse.com.tw/v1/opendata/t187ap05_L');
+  if (Array.isArray(rev)) rev.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).revYoY = num(r['去年同月增減(%)'] || r['營收-去年同月增減(%)']); });
+  await sleep(500);
+  // EPS（綜合損益表 - 基本每股盈餘）
+  const eps = await getJSON('https://openapi.twse.com.tw/v1/opendata/t187ap14_L');
+  if (Array.isArray(eps)) eps.forEach(r => { const c = (r.公司代號 || r.Code || '').trim(); if (c) ensure(c).eps = num(r.基本每股盈餘 || r.EPS); });
+  return out;
 }
 
 async function fetchMarket() {
@@ -141,6 +167,7 @@ async function fetchInstitutional(dateAD) {
   const market = await fetchMarket();
   const tradeDate = market._date || new Date().toISOString().slice(0, 10);
   const inst = await fetchInstitutional(tradeDate);
+  const fund = await fetchFundamentals();
 
   const stocks = [];
   for (let i = 0; i < CODES.length; i++) {
@@ -148,12 +175,15 @@ async function fetchInstitutional(dateAD) {
     const s = await fetchStock(code);
     if (!s) { console.log(`  [略過] ${code} 無資料`); continue; }
     const it = inst[code] || { foreign: 0, trust: 0 };
+    const fu = fund[code] || {};
     stocks.push({
       code, name: (names[code] && names[code].n) || '', industry: (names[code] && names[code].i) || '',
-      price: s.price, chg: s.chg, volume: s.volume, vol5: s.vol5,
+      price: s.price, chg: s.chg, open: s.open, high: s.high, low: s.low, volume: s.volume, vol5: s.vol5,
       ma5: s.ma5, ma10: s.ma10, ma20: s.ma20, ma60: s.ma60,
       rsi: s.rsi, k: s.k, d: s.d, macd: s.macd,
-      foreign: it.foreign, trust: it.trust
+      foreign: it.foreign, trust: it.trust,
+      eps: fu.eps != null ? +Number(fu.eps).toFixed(2) : '', pe: fu.pe != null ? +Number(fu.pe).toFixed(2) : '', revYoY: fu.revYoY != null ? +Number(fu.revYoY).toFixed(1) : '',
+      history: s.history
     });
     console.log(`  [${i + 1}/${CODES.length}] ${code} ${stocks[stocks.length-1].name} ${s.price}`);
   }

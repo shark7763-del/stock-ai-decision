@@ -38,6 +38,7 @@
   <button class="nav-btn" data-tab="entry">🟢 進場引擎</button>
   <button class="nav-btn" data-tab="exit">🔴 出場引擎</button>
   <button class="nav-btn" data-tab="risk">🛡 停損資金</button>
+  <button class="nav-btn" data-tab="backtest">🧪 回測中心</button>
   <button class="nav-btn" data-tab="holdings">💼 持股管理</button>
   <button class="nav-btn" data-tab="journal">📒 交易紀錄</button>
   <button class="nav-btn" data-tab="stats">📊 交易統計</button>
@@ -48,6 +49,7 @@
 
 <!-- ============ 儀表板 ============ -->
 <section class="tab active" id="dashboard">
+  <div id="todaySummary"></div>
   <div class="grid kpi-grid">
     <div class="card glass kpi"><span class="kpi-label">市場溫度</span><span class="kpi-val" id="dbTemp">—</span><div class="bar"><i id="dbTempBar"></i></div></div>
     <div class="card glass kpi"><span class="kpi-label">市場風險指數</span><span class="kpi-val warn" id="dbRisk">—</span><div class="bar"><i id="dbRiskBar" class="red"></i></div></div>
@@ -225,7 +227,8 @@
     <div class="card glass">
       <h3>🛡 停損 & 部位計算機</h3>
       <label>買進價</label><input type="number" id="rkBuy" step="0.01" placeholder="例 100">
-      <label>停損 % <small class="muted">(預設 8%)</small></label><input type="number" id="rkStop" step="0.1" value="8">
+      <label>停損價 <small class="muted">(絕對價，優先採用)</small></label><input type="number" id="rkStopPrice" step="0.01" placeholder="例 92">
+      <label>或 停損 % <small class="muted">(未填停損價時用，預設 8%)</small></label><input type="number" id="rkStop" step="0.1" value="8">
       <label>目標價 <small class="muted">(用於風險報酬比)</small></label><input type="number" id="rkTarget" step="0.01" placeholder="例 120">
       <label>總資金</label><input type="number" id="rkCapital" step="1000" placeholder="例 1000000">
       <label>單筆風險 % <small class="muted">(預設 2%)</small></label><input type="number" id="rkRisk" step="0.1" value="2">
@@ -240,6 +243,26 @@
     <button class="btn full" id="saveCapital">儲存設定</button>
     <p class="muted" id="capitalNote"></p>
   </div>
+</section>
+
+<!-- ============ 策略回測中心 ============ -->
+<section class="tab" id="backtest">
+  <div class="card glass">
+    <div class="card-head"><h3>🧪 策略回測中心</h3><button class="btn primary" id="btRun">▶ 執行回測</button></div>
+    <p class="muted">在目前股池上回測不同進場策略，輸出勝率／平均報酬／最大回撤／盈虧比，並自動網格搜尋最佳停損停利。有真實歷史(history)時用真實資料，否則用確定性模擬並標示。</p>
+    <div class="scan-filters">
+      <select class="select" id="btStrat">
+        <option value="ai80">AI 分數 80 以上買進</option>
+        <option value="ma20">突破 20MA 買進</option>
+        <option value="rsiReb">RSI 低檔反彈買進</option>
+        <option value="inst">法人連買買進</option>
+        <option value="volBreak">爆量突破買進</option>
+      </select>
+      <label class="muted" style="display:flex;align-items:center;gap:4px">停損%<input type="number" id="btStop" value="8" step="0.5" style="width:64px"></label>
+      <label class="muted" style="display:flex;align-items:center;gap:4px">停利%<input type="number" id="btTarget" value="15" step="0.5" style="width:64px"></label>
+    </div>
+  </div>
+  <div id="backtestResult"></div>
 </section>
 
 <!-- ============ 持股管理 ============ -->
@@ -299,5 +322,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="stocks-db.js"></script>
 <script src="app.js"></script>
+<script src="pro.js"></script>
 </body>
 </html>

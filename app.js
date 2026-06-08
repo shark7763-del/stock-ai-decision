@@ -1098,7 +1098,9 @@ function stockForm(s){
     ${field('D 值','f_d',s.d)}${field('外資買賣超(張)','f_foreign',s.foreign)}
     ${field('投信買賣超(張)','f_trust',s.trust)}${field('融資增減(張)','f_margin',s.margin)}
     ${field('前波支撐價','f_support',s.support)}${field('波段前高','f_prevHigh',s.prevHigh)}
-    ${field('波段前低','f_prevLow',s.prevLow)}${field('平台突破高度','f_platform',s.platform,'number',true)}
+    ${field('波段前低','f_prevLow',s.prevLow)}${field('平台突破高度','f_platform',s.platform)}
+    ${field('EPS','f_eps',s.eps)}${field('本益比 PE','f_pe',s.pe)}
+    ${field('月營收年增 %','f_revYoY',s.revYoY)}${field('月營收月增 %','f_revMoM',s.revMoM)}
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="saveStock('${s.id||''}')">儲存</button></div>`);
 }
@@ -1107,7 +1109,10 @@ function saveStock(id){
   if(!g('code')){toast('請輸入股票代號');return;}
   const o={id:id||uid(),code:g('code'),name:g('name'),industry:g('industry'),price:g('price'),chg:g('chg'),volume:g('volume'),vol5:g('vol5'),
     ma5:g('ma5'),ma10:g('ma10'),ma20:g('ma20'),ma60:g('ma60'),rsi:g('rsi'),macd:g('macd'),k:g('k'),d:g('d'),
-    foreign:g('foreign'),trust:g('trust'),margin:g('margin'),support:g('support'),prevHigh:g('prevHigh'),prevLow:g('prevLow'),platform:g('platform')};
+    foreign:g('foreign'),trust:g('trust'),margin:g('margin'),support:g('support'),prevHigh:g('prevHigh'),prevLow:g('prevLow'),platform:g('platform'),
+    eps:g('eps'),pe:g('pe'),revYoY:g('revYoY'),revMoM:g('revMoM')};
+  // 保留既有的歷史/情緒等自動欄位（編輯時不覆蓋）
+  if(id){const old=stocks.find(x=>x.id===id)||{};['history','newsSenti','socialHeat','open','high','low'].forEach(f=>{if(old[f]!==undefined)o[f]=old[f];});}
   if(id){const i=stocks.findIndex(x=>x.id===id);stocks[i]=o;}else stocks.push(o);
   save();closeModal();renderAll();toast('已儲存');
 }
@@ -1126,7 +1131,7 @@ function codeAutofill(){
 function addByCode(code){const d=(window.TW_STOCKS&&TW_STOCKS[code])||{};stockForm({code,name:d.n||'',industry:d.i||''});}
 
 /* 載入每日自動更新資料 data.json（由 GitHub Actions 產生） */
-const AUTO_FIELDS=['price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','k','d','macd','foreign','trust'];
+const AUTO_FIELDS=['price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','k','d','macd','foreign','trust','margin','open','high','low','eps','pe','revYoY','revMoM','newsSenti','socialHeat','prevHigh','prevLow','support','platform','history'];
 async function loadDailyData(silent){
   try{
     const res=await fetch('data.json?t='+Date.now());
@@ -1179,8 +1184,8 @@ function updateStockSuggest(q){
 }
 
 /* 批量貼上匯入 */
-const BULK_COLS=['code','name','industry','price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform'];
-const BULK_HEAD='代號,名稱,產業,價格,漲跌幅,成交量,5日均量,5MA,10MA,20MA,60MA,RSI,MACD,K,D,外資,投信,融資,前波支撐,前高,前低,平台高度';
+const BULK_COLS=['code','name','industry','price','chg','volume','vol5','ma5','ma10','ma20','ma60','rsi','macd','k','d','foreign','trust','margin','support','prevHigh','prevLow','platform','eps','pe','revYoY'];
+const BULK_HEAD='代號,名稱,產業,價格,漲跌幅,成交量,5日均量,5MA,10MA,20MA,60MA,RSI,MACD,K,D,外資,投信,融資,前波支撐,前高,前低,平台高度,EPS,本益比,營收年增%';
 function bulkStockForm(){
   openModal(`<h3>⇪ 批量匯入股票</h3>
   <p class="muted">每行一檔，欄位用 <b>逗號</b> 或 <b>Tab</b>（可直接從 Excel／Google 試算表整列複製貼上）分隔。<b>只有「代號」必填</b>，其餘可留空；同代號會自動更新。</p>
