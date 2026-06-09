@@ -1262,18 +1262,21 @@ function startLiveQuoteAutoRefresh(silent){
   liveQuoteTimer=setInterval(()=>refreshLiveQuotes(true),LIVE_QUOTE_INTERVAL);
 }
 function updateLiveQuoteStatus(text){
-  const el=$('#liveQuoteStatus'); if(!el)return;
-  if(text){el.textContent=text;return;}
+  const el=$('#liveQuoteStatus');
+  const top=$('#liveQuoteTopStatus');
+  const set=v=>{if(el)el.textContent=v;if(top)top.textContent=v;};
+  if(text){set(text);return;}
   if(liveQuoteMeta&&liveQuoteMeta.updated){
-    el.textContent=`即時股價：${new Date(liveQuoteMeta.updated).toLocaleTimeString('zh-TW',{hour12:false})} 更新 ${liveQuoteMeta.count||0} 檔`;
-  }else el.textContent='即時股價尚未更新。';
+    set(`即時股價：${new Date(liveQuoteMeta.updated).toLocaleTimeString('zh-TW',{hour12:false})} 更新 ${liveQuoteMeta.count||0} 檔`);
+  }else set('即時股價尚未更新。');
 }
 
 /* 在頂部列顯示資料日期，明確標示「收盤、非即時」避免誤會成盤中即時價 */
 function updateDataDateLabel(){
   const el=$('#todayDate'); if(!el)return;
   if(dataMeta&&dataMeta.tradeDate){
-    el.textContent=`📅 資料：${dataMeta.tradeDate} 收盤 · 非即時報價`;
+    const live=(liveQuoteMeta&&liveQuoteMeta.updated)?`＋ 即時股價 ${new Date(liveQuoteMeta.updated).toLocaleTimeString('zh-TW',{hour12:false})}`:'· 非即時報價';
+    el.textContent=`📅 資料：${dataMeta.tradeDate} 收盤 ${live}`;
     el.classList.add('data-stale');
   }else{
     el.textContent='⚠ 目前為示範資料 · 請按「載入今日數據」';
@@ -1425,6 +1428,7 @@ $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b
 $('#editMarketBtn').onclick=()=>marketForm();
 $('#loadDataBtn').onclick=()=>loadDailyData(false);
 $('#liveQuoteBtn').onclick=()=>startLiveQuoteAutoRefresh(false);
+$('#liveQuoteTopBtn').onclick=()=>startLiveQuoteAutoRefresh(false);
 ['#scanInd','#scanType','#scanRisk'].forEach(id=>{const e=$(id);if(e)e.onchange=renderScanner;});
 {const sb=$('#scanBtn');if(sb)sb.onclick=()=>{renderScanner();toast('已重新掃描');};}
 $('#importStockBtn').onclick=()=>bulkStockForm();
