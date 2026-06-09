@@ -16,6 +16,7 @@ let trades = DB.get(DB.k.trades, []);
 let cfg    = DB.get(DB.k.cfg, {capital:1000000, risk:2});
 let coach  = DB.get(DB.k.coach, {}); // {YYYY-MM-DD:{checks:{}}}
 let dataMeta = DB.get('fj_dataMeta', null); // {tradeDate, updated} 最近一次載入的資料日期
+let liveQuoteMeta = DB.get('fj_liveQuoteMeta', null); // {updated, count, source} 最近一次盤中即時報價
 const save = ()=>{DB.set(DB.k.stocks,stocks);DB.set(DB.k.holds,holds);DB.set(DB.k.trades,trades);DB.set(DB.k.cfg,cfg);DB.set(DB.k.coach,coach)};
 const uid = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 
@@ -1154,6 +1155,120 @@ async function loadDailyData(silent){
   }
 }
 
+/* 盤中即時股價：GitHub Pages 無後端，先直連 TWSE MIS；若被 CORS 擋住，再走公開 CORS proxy 備援。 */
+let liveQuoteTimer=null;
+let liveQuoteBusy=false;
+const LIVE_QUOTE_INTERVAL=5000;
+const LIVE_QUOTE_PROXY_BUILDERS=[
+  url=>url,
+  url=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(url),
+  url=>'https://api.cors.lol/?url='+encodeURIComponent(url),
+  url=>'https://api.allorigins.win/raw?url='+encodeURIComponent(url),
+  url=>'https://corsproxy.io/?url='+encodeURIComponent(url)
+];
+function liveNum(v){if(v===undefined||v===null||v===''||v==='-')return null;const x=parseFloat(v);return Number.isFinite(x)?x:null;}
+function twseQuoteUrl(channels){
+  return 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(channels.join('|'))+'&json=1&delay=0&_='+Date.now();
+}
+async function fetchLiveQuoteChannels(channels){
+  const target=twseQuoteUrl(channels);
+  let lastErr=null;
+  for(const build of LIVE_QUOTE_PROXY_BUILDERS){
+    try{
+      const res=await fetch(build(target),{cache:'no-store'});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const text=await res.text();
+      const data=JSON.parse(text.trim());
+      if(data&&Array.isArray(data.msgArray))return data.msgArray;
+      throw new Error('即時資料格式錯誤');
+    }catch(e){lastErr=e;}
+  }
+  throw lastErr||new Error('即時報價來源無回應');
+}
+function normalizeLiveQuote(raw){
+  const price=liveNum(raw.z), prev=liveNum(raw.y), bid=String(raw.b||'').split('_').map(liveNum).find(v=>v!==null), ask=String(raw.a||'').split('_').map(liveNum).find(v=>v!==null);
+  const ref=price ?? bid ?? ask ?? prev;
+  const chg=(ref!==null&&prev)?((ref-prev)/prev)*100:null;
+  return {
+    code:String(raw.c||'').trim(),
+    name:raw.n||raw.nf||'',
+    price:ref,
+    chg,
+    volume:liveNum(raw.v),
+    open:liveNum(raw.o),
+    high:liveNum(raw.h),
+    low:liveNum(raw.l),
+    quoteTime:(raw.d&&raw.t)?`${raw.d} ${raw.t}`:'',
+    exchange:raw.ex||''
+  };
+}
+function applyLiveQuote(q){
+  if(!q.code||q.price===null)return false;
+  let changed=false;
+  stocks.forEach(s=>{
+    if(String(s.code)===q.code){
+      s.price=q.price;
+      if(q.chg!==null)s.chg=+q.chg.toFixed(2);
+      if(q.volume!==null)s.volume=q.volume;
+      ['open','high','low'].forEach(f=>{if(q[f]!==null)s[f]=q[f];});
+      if(!s.name&&q.name)s.name=q.name;
+      s.liveAt=q.quoteTime||new Date().toISOString();
+      s.liveSource='TWSE MIS';
+      changed=true;
+    }
+  });
+  holds.forEach(h=>{
+    if(String(h.code)===q.code){
+      h.price=q.price;
+      if(!h.name&&q.name)h.name=q.name;
+      h.liveAt=q.quoteTime||new Date().toISOString();
+      changed=true;
+    }
+  });
+  return changed;
+}
+function liveQuoteCodes(){
+  return [...new Set([...stocks.map(s=>s.code),...holds.map(h=>h.code)].map(c=>String(c||'').trim()).filter(c=>/^\d{4,6}$/.test(c)))];
+}
+async function refreshLiveQuotes(silent){
+  if(liveQuoteBusy)return;
+  const codes=liveQuoteCodes();
+  updateLiveQuoteStatus(codes.length?`即時股價更新中：${codes.length} 檔`:'沒有可更新的股票代號');
+  if(!codes.length)return;
+  liveQuoteBusy=true;
+  try{
+    let found=0, changed=0;
+    const channels=[];
+    codes.forEach(code=>{channels.push('tse_'+code+'.tw','otc_'+code+'.tw');});
+    for(let i=0;i<channels.length;i+=30){
+      const rows=await fetchLiveQuoteChannels(channels.slice(i,i+30));
+      rows.map(normalizeLiveQuote).forEach(q=>{found++; if(applyLiveQuote(q))changed++;});
+    }
+    liveQuoteMeta={updated:new Date().toISOString(), count:changed, source:'TWSE MIS'};
+    DB.set('fj_liveQuoteMeta', liveQuoteMeta);
+    save();renderAll();
+    updateLiveQuoteStatus(`即時股價已更新：${changed}/${codes.length} 檔 · ${new Date().toLocaleTimeString('zh-TW',{hour12:false})}`);
+    if(!silent)toast(`即時股價已更新 ${changed} 檔`);
+  }catch(e){
+    updateLiveQuoteStatus('即時股價更新失敗：'+(e.message||e));
+    if(!silent)toast('即時股價更新失敗，可能是 CORS proxy 或 TWSE 暫時無回應');
+  }finally{
+    liveQuoteBusy=false;
+  }
+}
+function startLiveQuoteAutoRefresh(silent){
+  if(liveQuoteTimer)clearInterval(liveQuoteTimer);
+  refreshLiveQuotes(silent);
+  liveQuoteTimer=setInterval(()=>refreshLiveQuotes(true),LIVE_QUOTE_INTERVAL);
+}
+function updateLiveQuoteStatus(text){
+  const el=$('#liveQuoteStatus'); if(!el)return;
+  if(text){el.textContent=text;return;}
+  if(liveQuoteMeta&&liveQuoteMeta.updated){
+    el.textContent=`即時股價：${new Date(liveQuoteMeta.updated).toLocaleTimeString('zh-TW',{hour12:false})} 更新 ${liveQuoteMeta.count||0} 檔`;
+  }else el.textContent='即時股價尚未更新。';
+}
+
 /* 在頂部列顯示資料日期，明確標示「收盤、非即時」避免誤會成盤中即時價 */
 function updateDataDateLabel(){
   const el=$('#todayDate'); if(!el)return;
@@ -1164,6 +1279,7 @@ function updateDataDateLabel(){
     el.textContent='⚠ 目前為示範資料 · 請按「載入今日數據」';
     el.classList.add('data-stale');
   }
+  updateLiveQuoteStatus();
 }
 /* 建立代號 datalist（表單自動完成） */
 function buildCodeDatalist(){
@@ -1308,6 +1424,7 @@ $('#nav').addEventListener('click',e=>{const b=e.target.closest('.nav-btn');if(b
 
 $('#editMarketBtn').onclick=()=>marketForm();
 $('#loadDataBtn').onclick=()=>loadDailyData(false);
+$('#liveQuoteBtn').onclick=()=>startLiveQuoteAutoRefresh(false);
 ['#scanInd','#scanType','#scanRisk'].forEach(id=>{const e=$(id);if(e)e.onchange=renderScanner;});
 {const sb=$('#scanBtn');if(sb)sb.onclick=()=>{renderScanner();toast('已重新掃描');};}
 $('#importStockBtn').onclick=()=>bulkStockForm();
@@ -1372,4 +1489,4 @@ buildCodeDatalist();
 $('#accCapital').value=cfg.capital; $('#accRisk').value=cfg.risk;
 renderAll();
 /* 開啟即自動載入最新收盤資料（silent），讓畫面顯示真實收盤價與資料日期，而非示範假資料 */
-loadDailyData(true);
+loadDailyData(true).finally(()=>startLiveQuoteAutoRefresh(true));

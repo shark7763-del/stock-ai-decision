@@ -181,10 +181,12 @@
       <h3>🔍 選股中心 / 自選股池</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" id="loadDataBtn" title="讀取每日自動更新的台股資料">🔄 載入今日數據</button>
+        <button class="btn" id="liveQuoteBtn" title="抓取自選股與持股的盤中即時報價">⚡ 即時更新股價</button>
         <button class="btn" id="importStockBtn">⇪ 批量匯入</button>
         <button class="btn primary" id="addStockBtn">＋ 新增股票</button>
       </div>
     </div>
+    <p class="muted live-quote-note" id="liveQuoteStatus">即時股價尚未更新。</p>
     <input class="search" id="stockSearch" placeholder="輸入代號或名稱（例 2330 / 台積電）即時搜尋、快速加入…">
     <div id="stockSuggest" class="suggest-box"></div>
     <div class="table-wrap">
